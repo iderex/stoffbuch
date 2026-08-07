@@ -38,6 +38,14 @@ A measured value is tied to one source. If the publication is later withdrawn or
 shown to be wrong, the row stays and is marked, because the row was never a
 claim that the number was right.
 
+The method field says how the publication obtained the number, and it can say
+that the publication computed it rather than measured it. Whether such a row is
+admissible at all is a boundary question rather than a question about kinds, and
+it is settled in `out-of-scope.md`. What is settled here is that a computed
+number a publication printed is never silently indistinguishable from a
+measurement, and that it is not a derived value either, because this project
+cannot recompute somebody else's calculation.
+
 ### Fitted model
 
 Asserts that a named publication reported these coefficients for this named
