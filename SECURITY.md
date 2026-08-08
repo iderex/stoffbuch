@@ -135,11 +135,9 @@ changed with it rather than left to drift.
 It does not list the checks this repository runs. Those are printed by the gate
 command, which does not exist yet and is issue #15.
 
-It does not decide the terms a contribution is accepted under. This repository
-carries no licence:
-
-    gh api repos/iderex/stoffbuch --jq '.license.spdx_id // "none"'
-    none
-
-read on 2026-08-08. That is the first entry of issue #1 and is the maintainer's
-to settle. Reporting a problem does not depend on it; contributing a fix may.
+It does not decide the terms a contribution is accepted under. The repository is
+licensed under AGPL-3.0, and the text is in [LICENSE](LICENSE); this paragraph
+said there was no licence at all until that file landed. What the rows
+themselves carry, and whether a change from outside is taken at all, is the rest
+of the first entry of issue #1 and is the maintainer's to settle. Reporting a
+problem does not depend on it; contributing a fix may.
