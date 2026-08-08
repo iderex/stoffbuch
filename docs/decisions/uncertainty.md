@@ -94,6 +94,13 @@ normalised value is the half width divided by the square root of three. It
 assumes a rectangular distribution over the interval, which is the Type B
 treatment the published vocabulary gives for exactly this case.
 
+What would show that assumption wrong for a particular source is the source
+describing its own interval as something else: bounds given as a coverage
+interval at a stated level of confidence, or bounds a publication says came from
+repeated observation, are not the rectangular case and are read under the rule
+that fits them. An accuracy specification that names no distribution and no level
+stays here.
+
 `percent-of-value` is not a rule on its own and never appears alone. A
 percentage produces an interval from the value, and one of the rules above then
 turns the interval into a standard uncertainty. The tag is recorded as the pair,
