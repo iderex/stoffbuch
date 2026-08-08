@@ -121,6 +121,11 @@ const PARTS: &[Part] = &[
         runs: Runs::Check(a_test_reaches_nothing_it_may_not),
     },
     Part {
+        name: "invariants",
+        examines: "every tracked file a record names, for a rule no schema can express",
+        runs: Runs::Check(no_invariant_is_broken),
+    },
+    Part {
         name: "format",
         examines: "every Rust file in the workspace, against the form rustfmt writes",
         // `--color=never` is passed through to rustfmt, which colours its diff
@@ -482,6 +487,214 @@ fn reached(text: &str, whole: bool) -> Vec<(usize, &'static str, &'static str)> 
         }
     }
     reaching
+}
+
+/// Where the invariant records live.
+///
+/// A record carries the spelling it forbids, so this directory is a set of
+/// files each containing the thing it exists to refuse. Nothing under it is
+/// ever searched, and a record naming it as a subject is refused rather than
+/// quietly skipped.
+const INVARIANTS: &str = "docs/invariants/";
+
+/// One rule the tree holds by searching itself, as a record declares it.
+#[derive(Debug, PartialEq, Eq)]
+struct Invariant {
+    /// The name a refusal prints, taken from the file name.
+    id: String,
+    /// The path prefix whose tracked files are searched.
+    subject: String,
+    /// Text that may not appear in the subject, lowercased at load, because
+    /// the search ignores case: the same mistake is written in three casings
+    /// and listing all three would be a list of spellings for one spelling.
+    spellings: Vec<String>,
+    /// The sentence a refusal prints, in words somebody can act on without
+    /// opening the record.
+    rule: String,
+}
+
+/// Refuses a tracked file that breaks an invariant a record declares.
+///
+/// The records are the authority for which invariants exist and this function
+/// supplies only the search, so adding one is adding a file. What the records
+/// are is printed by the run and listed in no document.
+///
+/// A record that declares itself held while naming no spelling, no subject or
+/// no rule is refused rather than passed over, because such a record holds
+/// nothing while reading as though it does, and that is the one failure a
+/// register of rules cannot afford.
+fn no_invariant_is_broken(root: &Path) -> Judged {
+    let tracked = match tracked(root) {
+        Ok(tracked) => tracked,
+        Err(why) => return Judged::CouldNotJudge(why),
+    };
+
+    let declared: Vec<&String> = tracked
+        .iter()
+        .filter(|name| name.starts_with(INVARIANTS) && is_a_record(name))
+        .collect();
+
+    let mut invariants = Vec::new();
+    let mut unheld = 0_usize;
+    for name in &declared {
+        let text = match std::fs::read_to_string(root.join(name)) {
+            Ok(text) => text,
+            Err(why) => return Judged::CouldNotJudge(format!("{name}: {why}")),
+        };
+        match read_invariant(name, &text) {
+            Ok(Some(invariant)) => invariants.push(invariant),
+            Ok(None) => unheld += 1,
+            Err(why) => {
+                return Judged::Refused(format!("{name} is not a usable record.\n\n{why}\n"));
+            }
+        }
+    }
+
+    let mut broken = Vec::new();
+    let mut searched = 0_usize;
+    for name in &tracked {
+        let reaching: Vec<&Invariant> = invariants
+            .iter()
+            .filter(|invariant| name.starts_with(&invariant.subject))
+            .collect();
+        if reaching.is_empty() {
+            continue;
+        }
+        let Ok(text) = std::fs::read_to_string(root.join(name)) else {
+            continue;
+        };
+        searched += 1;
+        for (line, invariant) in breaks(&text, &reaching) {
+            broken.push(format!(
+                "  {name}:{line}  {}\n      {}",
+                invariant.id, invariant.rule
+            ));
+        }
+    }
+
+    if broken.is_empty() {
+        return Judged::Nothing(Some(format!(
+            "{} held, {unheld} recorded as not holdable this way, {searched} file(s) searched",
+            invariants.len()
+        )));
+    }
+    let mut why = format!("{} line(s) break an invariant:\n\n", broken.len());
+    for one in &broken {
+        let _ = writeln!(why, "{one}");
+    }
+    let _ = writeln!(
+        why,
+        "The rule under each line is the whole of it. Where the rule is wrong \
+         the repair is\nto the record in {INVARIANTS}, argued there, and not a \
+         spelling removed to get a\ngreen run."
+    );
+    Judged::Refused(why)
+}
+
+/// Whether a file in the records directory is a record.
+///
+/// The readme there argues the shape and is not one, so it is named rather than
+/// detected: a record with no header lines and a readme with none are the same
+/// file to a reader that only counts fields, and one of them is a defect.
+fn is_a_record(name: &str) -> bool {
+    Path::new(name)
+        .extension()
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("md"))
+        && !name.ends_with("README.md")
+}
+
+/// Every line of `text` that breaks one of `invariants`, with the line number.
+///
+/// The comparison is over lowercased text, so one spelling covers the snake,
+/// screaming and camel casings of the same mistake. It is a substring match
+/// rather than a word match, deliberately: the mistake this is for arrives as
+/// part of a longer name at least as often as on its own.
+fn breaks<'a>(text: &str, invariants: &[&'a Invariant]) -> Vec<(usize, &'a Invariant)> {
+    let mut broken = Vec::new();
+    for (index, line) in text.lines().enumerate() {
+        let lowered = line.to_ascii_lowercase();
+        for invariant in invariants {
+            if invariant
+                .spellings
+                .iter()
+                .any(|spelling| lowered.contains(spelling))
+            {
+                broken.push((index + 1, *invariant));
+            }
+        }
+    }
+    broken
+}
+
+/// One record read, or the reason it is not a usable one.
+///
+/// `Ok(None)` is a record declaring itself not holdable by a search. That is a
+/// legitimate state and the record says why in its body, so the run counts it
+/// rather than passing it over in silence.
+fn read_invariant(name: &str, text: &str) -> Result<Option<Invariant>, String> {
+    let mut held = None;
+    let mut subject = None;
+    let mut rule = None;
+    let mut spellings = Vec::new();
+    for line in text.lines() {
+        let Some((key, value)) = line.split_once(':') else {
+            continue;
+        };
+        let value = value.trim().to_owned();
+        match key {
+            "Held" => held = Some(value == "yes"),
+            "Subject" => subject = Some(value),
+            "Rule" => rule = Some(value),
+            "Spelling" => spellings.push(value.to_ascii_lowercase()),
+            _ => {}
+        }
+    }
+
+    let id = name
+        .rsplit('/')
+        .next()
+        .unwrap_or(name)
+        .trim_end_matches(".md")
+        .to_owned();
+
+    match held {
+        None => {
+            return Err(
+                "It carries no Held line, so whether the gate searches for it is not stated."
+                    .to_owned(),
+            );
+        }
+        Some(false) => return Ok(None),
+        Some(true) => {}
+    }
+
+    let (Some(subject), Some(rule)) = (subject, rule) else {
+        return Err(
+            "It declares Held: yes and carries no Subject or no Rule, so it names nothing to \
+             search and prints nothing a refusal could act on."
+                .to_owned(),
+        );
+    };
+    if spellings.is_empty() {
+        return Err(
+            "It declares Held: yes and lists no Spelling, so it would pass every tree while \
+             reading as an invariant that holds."
+                .to_owned(),
+        );
+    }
+    if INVARIANTS.starts_with(&subject) || subject.starts_with(INVARIANTS) {
+        return Err(format!(
+            "Its subject reaches {INVARIANTS}, where every record carries the spelling it \
+             forbids. A search there refuses the records themselves."
+        ));
+    }
+
+    Ok(Some(Invariant {
+        id,
+        subject,
+        spellings,
+        rule,
+    }))
 }
 
 /// Whether the check treats a file as binary and does not judge it.
@@ -932,6 +1145,160 @@ LAY\")",
             1,
             "test code when the file is one"
         );
+    }
+
+    // The invariants check. Every fixture below is assembled with `concat!`
+    // for the same reason the headless fixtures are: this file is under
+    // `crates/`, which is a subject a record names, so a fixture written as a
+    // literal would break the invariant it is a fixture for.
+
+    /// One held invariant's two fixtures.
+    ///
+    /// The pair is the whole point. A line that trips the invariant proves it
+    /// bites; a near neighbour that does not proves it has not been widened
+    /// until it refuses ordinary work, which is the direction this kind of
+    /// check actually fails in.
+    struct Fixtures {
+        id: &'static str,
+        trips: &'static str,
+        near_neighbour: &'static str,
+    }
+
+    const FIXTURES: &[Fixtures] = &[Fixtures {
+        id: "no-default-for-an-absent-condition",
+        trips: concat!("    let t = assumed_", "temperature(row);"),
+        near_neighbour: concat!("    let t = stated_", "temperature(row);"),
+    }];
+
+    /// Every record in this tree, read the way the check reads them.
+    fn the_records() -> Vec<(String, Result<Option<Invariant>, String>)> {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("..")
+            .join(INVARIANTS);
+        let mut read = Vec::new();
+        for entry in std::fs::read_dir(&root).expect("the records directory is in this tree") {
+            let path = entry.expect("a readable entry").path();
+            let name = path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or_default()
+                .to_owned();
+            if !is_a_record(&name) {
+                continue;
+            }
+            let text = std::fs::read_to_string(&path).expect("a readable record");
+            let held = read_invariant(&name, &text);
+            read.push((name, held));
+        }
+        read
+    }
+
+    #[test]
+    fn every_held_invariant_has_a_fixture_that_trips_it_and_a_near_neighbour() {
+        // The set comparison is what makes the obligation follow the record
+        // rather than somebody's memory: a record added with no fixtures
+        // reddens here, and a fixture left behind by a deleted record does
+        // too.
+        let mut held: Vec<String> = the_records()
+            .into_iter()
+            .filter_map(|(name, read)| {
+                read.unwrap_or_else(|why| panic!("{name} is not a usable record: {why}"))
+                    .map(|invariant| invariant.id)
+            })
+            .collect();
+        held.sort();
+        let mut fixtured: Vec<String> = FIXTURES.iter().map(|f| f.id.to_owned()).collect();
+        fixtured.sort();
+        assert_eq!(
+            held, fixtured,
+            "a held invariant with no fixtures, or the other way about"
+        );
+    }
+
+    #[test]
+    fn each_fixture_trips_its_own_invariant_and_its_neighbour_trips_nothing() {
+        let records: Vec<Invariant> = the_records()
+            .into_iter()
+            .filter_map(|(_, read)| read.ok().flatten())
+            .collect();
+        let all: Vec<&Invariant> = records.iter().collect();
+        for fixture in FIXTURES {
+            let broken = breaks(fixture.trips, &all);
+            assert_eq!(broken.len(), 1, "{}: {:?}", fixture.id, broken.len());
+            assert_eq!(
+                broken[0].1.id, fixture.id,
+                "the refusal names the wrong invariant"
+            );
+            assert!(
+                !broken[0].1.rule.is_empty(),
+                "a refusal that prints no rule is one nobody can act on"
+            );
+            assert!(
+                breaks(fixture.near_neighbour, &all).is_empty(),
+                "{} refuses its near neighbour",
+                fixture.id
+            );
+        }
+    }
+
+    #[test]
+    fn a_record_holding_nothing_while_reading_as_though_it_holds_is_refused() {
+        let missing_spelling = "Id: x\nHeld: yes\nSubject: crates/\nRule: a rule\n\nbody\n";
+        let why = read_invariant("x.md", missing_spelling).expect_err("a record holding nothing");
+        assert!(why.contains("Spelling"), "{why}");
+
+        let missing_rule = "Id: x
+Held: yes
+Subject: crates/
+Spelling: q
+
+body
+";
+        assert!(read_invariant("x.md", missing_rule).is_err());
+
+        let missing_held = "Id: x\nSubject: crates/\nRule: a rule\n\nbody\n";
+        assert!(read_invariant("x.md", missing_held).is_err());
+    }
+
+    #[test]
+    fn a_record_searching_the_records_is_refused() {
+        // A record carries the spelling it forbids, so a subject reaching them
+        // refuses the records themselves. The exclusion is stated by a refusal
+        // rather than by a silent skip, which is why this is an error and not
+        // an empty result.
+        let reaching =
+            format!("Id: x\nHeld: yes\nSubject: {INVARIANTS}\nRule: a rule\nSpelling: q\n\nbody\n");
+        let why = read_invariant("x.md", &reaching).expect_err("a record searching the records");
+        assert!(why.contains(INVARIANTS), "{why}");
+
+        let wider = "Id: x\nHeld: yes\nSubject: docs/\nRule: a rule\nSpelling: q\n\nbody\n";
+        assert!(
+            read_invariant("x.md", wider).is_err(),
+            "a subject the records sit under reaches them too"
+        );
+    }
+
+    #[test]
+    fn a_record_that_cannot_be_held_this_way_is_counted_rather_than_refused() {
+        // Recording an invariant as unheld is a legitimate state and the point
+        // of the register: the alternative is a pattern that half works, which
+        // makes a green run mean something it does not.
+        let unheld = "Id: x\nHeld: no\nRule: a rule\nRetired-by: something\n\nwhy not\n";
+        assert_eq!(read_invariant("x.md", unheld), Ok(None));
+    }
+
+    #[test]
+    fn the_search_ignores_case_and_does_not_require_a_word_boundary() {
+        let records: Vec<Invariant> = the_records()
+            .into_iter()
+            .filter_map(|(_, read)| read.ok().flatten())
+            .collect();
+        let all: Vec<&Invariant> = records.iter().collect();
+        let camel = concat!("fn assumedT", "emperature() {}");
+        assert_eq!(breaks(camel, &all).len(), 1, "a casing walks through");
+        let inside = concat!("    self.assumed_", "temperature_kelvin = 293.15;");
+        assert_eq!(breaks(inside, &all).len(), 1, "a longer name walks through");
     }
 
     #[test]

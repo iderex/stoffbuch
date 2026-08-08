@@ -105,6 +105,13 @@ for the rules this project states that no schema can express, of which several
 are already Done-when conditions on other issues with nothing behind them. Issue
 #91 holds it, opened by this walk.
 
+The gate part is named `invariants`. That is the name a refusal prints and the
+name this document is holding stable, and it is not yet a name a protection rule
+can require: a rule requires the context of a check that runs on the server, and
+no workflow here runs the gate. #16 is what creates one, and the name it gives
+that leg is what a rule would name. Which invariants the part holds is printed by
+the run and is not restated here.
+
 ### Reject Trojan Source Unicode
 
 Adopted, with one adaptation that decides whether the register can do its job.
