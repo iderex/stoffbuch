@@ -116,6 +116,11 @@ const PARTS: &[Part] = &[
         runs: Runs::Check(no_carriage_return),
     },
     Part {
+        name: "headless",
+        examines: "the test code in every tracked Rust file, for a surface a test may not reach",
+        runs: Runs::Check(a_test_reaches_nothing_it_may_not),
+    },
+    Part {
         name: "format",
         examines: "every Rust file in the workspace, against the form rustfmt writes",
         // `--color=never` is passed through to rustfmt, which colours its diff
@@ -241,19 +246,9 @@ fn execute(part: &Part, root: &Path) -> Outcome {
 /// return is in the tree and when a clone's checkout put one in a file the
 /// declaration failed to reach.
 fn no_carriage_return(root: &Path) -> Judged {
-    let listed = Command::new("git")
-        .args(["ls-files", "-z"])
-        .current_dir(root)
-        .output();
-    let listed = match listed {
-        Ok(output) if output.status.success() => output.stdout,
-        Ok(output) => {
-            return Judged::CouldNotJudge(format!(
-                "git ls-files -z said: {}",
-                String::from_utf8_lossy(&output.stderr).trim_end()
-            ));
-        }
-        Err(why) => return Judged::CouldNotJudge(format!("git ls-files -z: {why}")),
+    let tracked = match tracked(root) {
+        Ok(tracked) => tracked,
+        Err(why) => return Judged::CouldNotJudge(why),
     };
 
     let mut carrying = Vec::new();
@@ -261,11 +256,7 @@ fn no_carriage_return(root: &Path) -> Judged {
     let mut binary = 0_usize;
     let mut unread = 0_usize;
 
-    for name in listed
-        .split(|byte| *byte == 0)
-        .filter(|name| !name.is_empty())
-    {
-        let name = String::from_utf8_lossy(name).into_owned();
+    for name in tracked {
         let Ok(bytes) = std::fs::read(root.join(&name)) else {
             // Tracked and not in the working copy: staged for deletion, or a
             // path this filesystem cannot open. Counted rather than passed
@@ -313,9 +304,184 @@ fn no_carriage_return(root: &Path) -> Judged {
     Judged::Nothing(Some(note))
 }
 
+/// Every path git tracks at `root`, or the reason the list could not be had.
+///
+/// git is asked rather than the directory walked, because what is tracked is
+/// git's answer and a walk would judge whatever a working directory happens to
+/// be holding.
+fn tracked(root: &Path) -> Result<Vec<String>, String> {
+    let listed = Command::new("git")
+        .args(["ls-files", "-z"])
+        .current_dir(root)
+        .output();
+    let listed = match listed {
+        Ok(output) if output.status.success() => output.stdout,
+        Ok(output) => {
+            return Err(format!(
+                "git ls-files -z said: {}",
+                String::from_utf8_lossy(&output.stderr).trim_end()
+            ));
+        }
+        Err(why) => return Err(format!("git ls-files -z: {why}")),
+    };
+    Ok(listed
+        .split(|byte| *byte == 0)
+        .filter(|name| !name.is_empty())
+        .map(|name| String::from_utf8_lossy(name).into_owned())
+        .collect())
+}
+
 /// Whether a file carries a carriage return anywhere in it.
 fn carries_a_carriage_return(bytes: &[u8]) -> bool {
     bytes.contains(&b'\r')
+}
+
+/// A surface a test may not reach, with the rule it comes from.
+///
+/// The spelling is matched as plain text, so that a refusal can print the rule
+/// rather than a pattern, and so that what the check refuses is a list somebody
+/// can read rather than an expression somebody has to decode.
+struct Forbidden {
+    /// The text that names the surface.
+    spelling: &'static str,
+    /// The rule, in words a contributor can act on without opening this file.
+    rule: &'static str,
+}
+
+/// A test may reach none of these.
+///
+/// Every entry is one of the things
+/// `docs/decisions/headless-and-unprivileged.md` writes as a thing a test may
+/// not do, and this list is the part of that record a machine can refuse. What
+/// it cannot refuse is written in the record beside the rule rather than here.
+const FORBIDDEN: &[Forbidden] = &[
+    Forbidden {
+        spelling: "DISPLAY",
+        rule: "a test may not require a display server or read a display \
+               environment variable to decide what to do",
+    },
+    Forbidden {
+        spelling: "TcpStream",
+        rule: "a test may not require a socket to connect",
+    },
+    Forbidden {
+        spelling: "TcpListener",
+        rule: "a test may not listen on a socket",
+    },
+    Forbidden {
+        spelling: "UdpSocket",
+        rule: "a test may not require a socket",
+    },
+    Forbidden {
+        spelling: "to_socket_addrs",
+        rule: "a test may not require a name to resolve",
+    },
+    Forbidden {
+        spelling: "sudo",
+        rule: "a test may not require administrative rights or a prompt that asks for them",
+    },
+    Forbidden {
+        spelling: "runas",
+        rule: "a test may not require elevation",
+    },
+    Forbidden {
+        spelling: "schtasks",
+        rule: "a test may not register a scheduled task or anything that outlives it",
+    },
+    Forbidden {
+        spelling: "sc.exe",
+        rule: "a test may not register or start a service",
+    },
+    Forbidden {
+        spelling: "dev-certs",
+        rule: "a test may not run anything that raises a trust or consent prompt",
+    },
+];
+
+/// Refuses a test that reaches a surface the suite may not depend on.
+///
+/// What it reads is test code in tracked Rust files: everything from the first
+/// `#[cfg(test)]` in a file to the end of it, which is where this repository
+/// puts a test module, and the whole of any file under a `tests/` directory.
+/// Production code is not judged, because the rule is about the suite: the
+/// command line legitimately reaches a terminal and the gate legitimately
+/// starts a process.
+///
+/// The limit is the same one the record states. This reads text, so it catches
+/// the ordinary mistake written in the ordinary spelling, and it cannot see a
+/// library that opens a window three calls down, a path assembled at run time,
+/// or a name resolved inside a dependency. The demonstration on a machine with
+/// none of those things is the other half and neither substitutes for the
+/// other.
+fn a_test_reaches_nothing_it_may_not(root: &Path) -> Judged {
+    let tracked = match tracked(root) {
+        Ok(tracked) => tracked,
+        Err(why) => return Judged::CouldNotJudge(why),
+    };
+
+    let mut offences = Vec::new();
+    let mut read = 0_usize;
+
+    let rust = tracked.iter().filter(|name| {
+        Path::new(name)
+            .extension()
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("rs"))
+    });
+    for name in rust {
+        let Ok(text) = std::fs::read_to_string(root.join(name)) else {
+            continue;
+        };
+        read += 1;
+        for (line, spelling, rule) in reached(&text, is_a_test_file(name)) {
+            offences.push(format!("  {name}:{line}  {spelling}\n      {rule}"));
+        }
+    }
+
+    if offences.is_empty() {
+        return Judged::Nothing(Some(format!(
+            "{read} tracked Rust file(s) read, test code only"
+        )));
+    }
+    let mut why = format!("{} thing(s) a test may not reach:\n\n", offences.len());
+    for offence in &offences {
+        let _ = writeln!(why, "{offence}");
+    }
+    let _ = writeln!(
+        why,
+        "A test that genuinely needs one of these is not a test in this suite. \
+         It moves\nto the harness for what needs a network or a long run, and \
+         the move is the repair\nrather than an exception."
+    );
+    Judged::Refused(why)
+}
+
+/// Whether every line of a file is test code.
+fn is_a_test_file(name: &str) -> bool {
+    name.contains("/tests/") || name.starts_with("tests/")
+}
+
+/// Every forbidden surface the test code in `text` reaches, with its line.
+///
+/// Where `whole` is false, the test code is taken to start at the first
+/// `#[cfg(test)]` and run to the end of the file. That is a convention rather
+/// than a parse, and it is the convention this repository follows: a test
+/// module with production code after it is outside what this reads, which is
+/// the limit of taking a line at a time instead of carrying a parser.
+fn reached(text: &str, whole: bool) -> Vec<(usize, &'static str, &'static str)> {
+    let mut reaching = Vec::new();
+    let mut inside = whole;
+    for (index, line) in text.lines().enumerate() {
+        if !inside {
+            inside = line.trim_start().starts_with("#[cfg(test)]");
+            continue;
+        }
+        for forbidden in FORBIDDEN {
+            if line.contains(forbidden.spelling) {
+                reaching.push((index + 1, forbidden.spelling, forbidden.rule));
+            }
+        }
+    }
+    reaching
 }
 
 /// Whether the check treats a file as binary and does not judge it.
@@ -676,6 +842,108 @@ mod tests {
         );
         assert!(printed.contains("ran"), "{printed}");
         assert!(printed.contains(note), "{printed}");
+    }
+
+    // The headless check. Every fixture spelling below is assembled from two
+    // halves rather than written out, and the elision is deliberate: this
+    // module is test code, so it is exactly what the check reads, and a fixture
+    // written as a literal would make the suite refuse itself. `concat!` puts
+    // the halves together before anything runs, so what the check is given is
+    // the spelling a contributor would actually write.
+
+    fn as_written(first: &str, second: &str) -> String {
+        format!("#[cfg(test)]\nmod tests {{\n    let a = {first}{second};\n}}\n")
+    }
+
+    #[test]
+    fn a_test_reading_a_display_variable_is_refused() {
+        let source = as_written(
+            "std::env::var(\"",
+            "DISP\
+LAY\")",
+        );
+        let reaching = reached(&source, false);
+        assert_eq!(reaching.len(), 1, "{reaching:?}");
+        assert_eq!(reaching[0].0, 3);
+        assert!(reaching[0].2.contains("display"), "{reaching:?}");
+    }
+
+    #[test]
+    fn a_test_opening_a_socket_is_refused() {
+        let source = as_written("std::net::Tcp", "Stream::connect(there)");
+        let reaching = reached(&source, false);
+        assert_eq!(reaching.len(), 1, "{reaching:?}");
+        assert!(reaching[0].2.contains("socket"), "{reaching:?}");
+    }
+
+    #[test]
+    fn a_test_asking_for_rights_is_refused() {
+        let source = as_written("Command::new(\"su", "do\")");
+        let reaching = reached(&source, false);
+        assert_eq!(reaching.len(), 1, "{reaching:?}");
+        assert!(
+            reaching[0].2.contains("administrative rights"),
+            "{reaching:?}"
+        );
+    }
+
+    #[test]
+    fn the_near_neighbour_of_each_one_passes() {
+        // As little apart from the fixtures above as the surface allows. A
+        // temporary directory rather than a display, a channel rather than a
+        // socket, and a subprocess that is not a rights prompt. A check that
+        // refused these would be one somebody weakens until it holds nothing.
+        let neighbours = [
+            "std::env::var(\"CARGO_MANIFEST_DIR\")",
+            "std::sync::mpsc::channel()",
+            "Command::new(\"git\").args([\"ls-files\"])",
+        ];
+        for neighbour in neighbours {
+            let source = as_written(neighbour, "");
+            assert!(reached(&source, false).is_empty(), "{neighbour}");
+        }
+    }
+
+    #[test]
+    fn production_code_above_the_test_module_is_not_judged() {
+        // The command line reaches a terminal and the gate starts processes,
+        // and neither is a test. The rule is about the suite, so the check
+        // reads the suite.
+        let source = format!(
+            "fn main() {{\n    Command::new(\"su{}\");\n}}\n#[cfg(test)]\nmod tests {{}}\n",
+            "do"
+        );
+        assert!(reached(&source, false).is_empty(), "{source}");
+    }
+
+    #[test]
+    fn a_file_under_tests_is_read_whole() {
+        // An integration test file has no `#[cfg(test)]` line to start at, so
+        // a check that waited for one would read none of it.
+        assert!(is_a_test_file("crates/stoffbuch/tests/reads_a_row.rs"));
+        assert!(!is_a_test_file("crates/stoffbuch/src/lib.rs"));
+        let source = format!("let a = std::net::Tcp{}::bind(here);\n", "Listener");
+        assert!(
+            reached(&source, false).is_empty(),
+            "not test code without the marker"
+        );
+        assert_eq!(
+            reached(&source, true).len(),
+            1,
+            "test code when the file is one"
+        );
+    }
+
+    #[test]
+    fn every_forbidden_surface_carries_the_rule_it_comes_from() {
+        for forbidden in FORBIDDEN {
+            assert!(!forbidden.spelling.is_empty());
+            assert!(
+                forbidden.rule.starts_with("a test may not"),
+                "{} states no rule a contributor can act on",
+                forbidden.spelling
+            );
+        }
     }
 
     #[test]
