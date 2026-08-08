@@ -1,0 +1,29 @@
+# Line endings are part of the data here, not a matter of taste.
+#
+# The stored format requires line feed line endings, and a row points at its
+# tabulated block by a digest of that block's bytes. On a clone that converts
+# line endings when it writes the working copy, the bytes a digest is computed
+# over are not the bytes in the tree, so a digest written on such a clone is
+# wrong for every other reader and a digest written elsewhere is refused on it.
+# That default is active on one of the platforms this project supports.
+#
+# `text` normalises to line feed on the way in, so a carriage return cannot
+# enter the tree. `eol=lf` writes line feed on the way out whatever the clone is
+# configured to do, so the working copy and the blob are the same bytes.
+# Neither half is enough alone: without the first a carriage return lands in the
+# tree, and without the second it comes back out of a clean tree.
+
+*               text=auto eol=lf
+
+# Named rather than left to the automatic text detection, because these are the
+# files whose bytes a digest or a canonical form is a claim about, and detection
+# is a guess this project should not be making about its own product.
+
+*.json          text eol=lf
+*.tsv           text eol=lf
+*.md            text eol=lf
+*.yml           text eol=lf
+*.yaml          text eol=lf
+*.toml          text eol=lf
+*.rs            text eol=lf
+.gitattributes  text eol=lf
