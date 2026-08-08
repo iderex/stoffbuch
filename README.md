@@ -8,6 +8,9 @@ that depends on it exists.
 
 See [NOTICE.md](NOTICE.md) for the intended-use notice.
 
+[SECURITY.md](SECURITY.md) says how to report a problem privately, what counts
+as one here, and what happens when a value is suspected of having been made up.
+
 ## What these tools send
 
 Nothing. There is no telemetry, no crash reporting, no update check and no
