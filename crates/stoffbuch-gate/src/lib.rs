@@ -46,8 +46,9 @@ impl Exit {
 /// What a part did.
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Outcome {
-    /// It ran and refused nothing.
-    Ran(Duration),
+    /// It ran and refused nothing. The note, where there is one, says what the
+    /// part did not reach, so a green line is not read as covering it.
+    Ran(Duration, Option<String>),
     /// It did not run, and the sentence says what would make it.
     Skipped(&'static str),
     /// It ran and refused. The string is everything it wrote.
@@ -71,10 +72,25 @@ enum Runs {
     /// A command, the program first and its arguments after, run with the
     /// workspace root as the working directory.
     Command(&'static [&'static str]),
+    /// A check this repository owns, run in this process against the tree at
+    /// the given root.
+    Check(fn(&Path) -> Judged),
     /// Nothing yet. The part is declared anyway, so that a run cannot be read
     /// as covering what the part names, and the sentence says what would make
     /// it run.
     NotBuilt(&'static str),
+}
+
+/// What a check this repository owns found.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Judged {
+    /// Nothing refused. The note, where there is one, says what the check did
+    /// not reach.
+    Nothing(Option<String>),
+    /// Refused. The text names every subject and why.
+    Refused(String),
+    /// The check could not judge its subject, so nothing about it is known.
+    CouldNotJudge(String),
 }
 
 /// A part of the gate.
@@ -94,6 +110,11 @@ struct Part {
 /// run ends at the thing to fix rather than after the slowest part. Formatting
 /// comes before linting because a reformat changes the source the linter reads.
 const PARTS: &[Part] = &[
+    Part {
+        name: "line-endings",
+        examines: "every tracked text file in the working copy, for a carriage return",
+        runs: Runs::Check(no_carriage_return),
+    },
     Part {
         name: "format",
         examines: "every Rust file in the workspace, against the form rustfmt writes",
@@ -172,6 +193,16 @@ fn execute(part: &Part, root: &Path) -> Outcome {
     let argv = match part.runs {
         Runs::Command(argv) => argv,
         Runs::NotBuilt(would_run_when) => return Outcome::Skipped(would_run_when),
+        Runs::Check(check) => {
+            let started = Instant::now();
+            let judged = check(root);
+            let took = started.elapsed();
+            return match judged {
+                Judged::Nothing(note) => Outcome::Ran(took, note),
+                Judged::Refused(why) => Outcome::Failed(took, why),
+                Judged::CouldNotJudge(why) => Outcome::Unstartable(why),
+            };
+        }
     };
     let (program, arguments) = argv
         .split_first()
@@ -186,13 +217,116 @@ fn execute(part: &Part, root: &Path) -> Outcome {
 
     match finished {
         Err(why) => Outcome::Unstartable(format!("{}: {why}", argv.join(" "))),
-        Ok(output) if output.status.success() => Outcome::Ran(took),
+        Ok(output) if output.status.success() => Outcome::Ran(took, None),
         Ok(output) => {
             let mut said = String::from_utf8_lossy(&output.stdout).into_owned();
             said.push_str(&String::from_utf8_lossy(&output.stderr));
             Outcome::Failed(took, said)
         }
     }
+}
+
+/// Refuses a tracked text file whose working copy carries a carriage return.
+///
+/// The stored format requires line feed endings, and a row points at its
+/// tabulated block by a digest of that block's bytes, so a carriage return is
+/// not a cosmetic difference: a digest computed over a working copy that
+/// carries one does not match a digest computed anywhere else, and the failure
+/// runs in both directions.
+///
+/// `.gitattributes` converts, and converting is not refusing. A file that was
+/// fixed on one machine and a file that is right everywhere look the same
+/// afterwards, and only the second is a guard. This is the guard: it reads the
+/// working copy rather than the blob, so it goes red both when a carriage
+/// return is in the tree and when a clone's checkout put one in a file the
+/// declaration failed to reach.
+fn no_carriage_return(root: &Path) -> Judged {
+    let listed = Command::new("git")
+        .args(["ls-files", "-z"])
+        .current_dir(root)
+        .output();
+    let listed = match listed {
+        Ok(output) if output.status.success() => output.stdout,
+        Ok(output) => {
+            return Judged::CouldNotJudge(format!(
+                "git ls-files -z said: {}",
+                String::from_utf8_lossy(&output.stderr).trim_end()
+            ));
+        }
+        Err(why) => return Judged::CouldNotJudge(format!("git ls-files -z: {why}")),
+    };
+
+    let mut carrying = Vec::new();
+    let mut read = 0_usize;
+    let mut binary = 0_usize;
+    let mut unread = 0_usize;
+
+    for name in listed
+        .split(|byte| *byte == 0)
+        .filter(|name| !name.is_empty())
+    {
+        let name = String::from_utf8_lossy(name).into_owned();
+        let Ok(bytes) = std::fs::read(root.join(&name)) else {
+            // Tracked and not in the working copy: staged for deletion, or a
+            // path this filesystem cannot open. Counted rather than passed
+            // over, because a file nothing read is not a file nothing refused.
+            unread += 1;
+            continue;
+        };
+        if is_binary(&bytes) {
+            binary += 1;
+        } else {
+            read += 1;
+            if carries_a_carriage_return(&bytes) {
+                carrying.push(name);
+            }
+        }
+    }
+
+    if !carrying.is_empty() {
+        let mut why = format!(
+            "{} tracked text file(s) carry a carriage return, and a digest over \
+             these bytes is wrong for every other reader:\n\n",
+            carrying.len()
+        );
+        for name in &carrying {
+            let _ = writeln!(why, "  {name}");
+        }
+        let _ = writeln!(
+            why,
+            "\nWhere the tree holds line feeds and the working copy does not, the \
+             checkout\npredates the declaration in .gitattributes and git writes the \
+             file again if\nit is removed and checked out. Where the tree holds the \
+             carriage return, the\nrepair is a commit. `git ls-files --eol <path>` says \
+             which of the two it is."
+        );
+        return Judged::Refused(why);
+    }
+
+    let mut note = format!("{read} text file(s) read");
+    if binary > 0 {
+        let _ = write!(note, ", {binary} skipped as binary and not judged");
+    }
+    if unread > 0 {
+        let _ = write!(note, ", {unread} tracked but not in the working copy");
+    }
+    Judged::Nothing(Some(note))
+}
+
+/// Whether a file carries a carriage return anywhere in it.
+fn carries_a_carriage_return(bytes: &[u8]) -> bool {
+    bytes.contains(&b'\r')
+}
+
+/// Whether the check treats a file as binary and does not judge it.
+///
+/// A zero byte near the start is git's own test, and using the same one keeps
+/// this check's subject the same as the subject `.gitattributes` reaches. It is
+/// a heuristic in both places: a text file holding a zero byte is skipped here
+/// and left unconverted there, which is why a skipped file is counted in the
+/// report rather than passed over quietly.
+fn is_binary(bytes: &[u8]) -> bool {
+    bytes.iter().take(8000).any(|byte| *byte == 0)
 }
 
 /// The width the part names are padded to, so the verdicts line up.
@@ -208,13 +342,16 @@ fn line(result: &Reported, width: usize) -> String {
     let mut line = String::new();
     let name = result.name;
     match &result.outcome {
-        Outcome::Ran(took) => {
+        Outcome::Ran(took, note) => {
             let _ = writeln!(
                 line,
                 "{name:width$}  ran      {:>7}  {}",
                 secs(*took),
                 result.examines
             );
+            if let Some(note) = note {
+                let _ = writeln!(line, "{:width$}  {note}", "");
+            }
         }
         Outcome::Skipped(would_run_when) => {
             let _ = writeln!(line, "{name:width$}  skipped          {}", result.examines);
@@ -257,7 +394,7 @@ fn tail(results: &[Reported]) -> String {
     let mut not_reached = 0;
     for result in results {
         match result.outcome {
-            Outcome::Ran(_) => ran += 1,
+            Outcome::Ran(..) => ran += 1,
             Outcome::Skipped(_) => skipped += 1,
             Outcome::Failed(..) => refused += 1,
             Outcome::Unstartable(_) => unknown += 1,
@@ -332,7 +469,7 @@ mod tests {
         Reported {
             name,
             examines: "what it examines",
-            outcome: Outcome::Ran(Duration::ZERO),
+            outcome: Outcome::Ran(Duration::ZERO, None),
         }
     }
 
@@ -446,6 +583,7 @@ mod tests {
             );
             match part.runs {
                 Runs::Command(argv) => assert!(!argv.is_empty(), "{} names no program", part.name),
+                Runs::Check(_) => {}
                 Runs::NotBuilt(would_run_when) => {
                     assert!(!would_run_when.is_empty(), "{} says nothing", part.name);
                 }
@@ -466,6 +604,78 @@ mod tests {
     fn the_workspace_manifest_is_the_root() {
         let workspace = "[workspace]\nmembers = [\"crates/*\"]\nresolver = \"3\"\n";
         assert!(declares_a_workspace(workspace));
+    }
+
+    // The line-endings check. The fixtures are byte strings with the endings
+    // written as escapes, because a literal carriage return in this file would
+    // be normalised on its way into the tree by the very declaration the check
+    // exists to hold, and the fixture would then prove nothing.
+
+    #[test]
+    fn a_tabulated_block_with_line_feed_endings_is_clean() {
+        let block = b"T\tn\n300\t3.42\n400\t3.44\n";
+        assert!(!carries_a_carriage_return(block));
+    }
+
+    #[test]
+    fn the_same_block_written_with_carriage_returns_is_refused() {
+        // Byte for byte the block above as a converting checkout writes it.
+        let block = b"T\tn\r\n300\t3.42\r\n400\t3.44\r\n";
+        assert!(carries_a_carriage_return(block));
+    }
+
+    #[test]
+    fn a_carriage_return_on_its_own_is_refused() {
+        // Not every stray carriage return arrives in a pair. One inside a
+        // field is what the tabulated block format refuses and has no quoting
+        // rule to fall back on.
+        assert!(carries_a_carriage_return(b"300\t3.42\ris not 3.42"));
+    }
+
+    #[test]
+    fn a_carriage_return_at_the_very_end_is_refused() {
+        assert!(carries_a_carriage_return(b"300\t3.42\n\r"));
+    }
+
+    #[test]
+    fn a_carriage_return_past_the_first_eight_thousand_bytes_is_refused() {
+        // The near-miss this check is most likely to be written with: the
+        // binary test below reads a prefix, and reusing that prefix for the
+        // search would pass a file whose only carriage return is late in it.
+        let mut late = vec![b'x'; 9000];
+        late.push(b'\r');
+        assert!(carries_a_carriage_return(&late));
+    }
+
+    #[test]
+    fn a_file_with_a_zero_byte_is_binary_and_is_not_judged() {
+        assert!(is_binary(b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR"));
+        assert!(!is_binary(b"T\tn\n300\t3.42\n"));
+    }
+
+    #[test]
+    fn a_zero_byte_far_into_a_file_leaves_it_text() {
+        // git decides on a prefix and so does this, so the two agree on which
+        // files the declaration reaches. The cost is that a file with a zero
+        // byte after the prefix is read as text, which is the direction that
+        // examines more rather than less.
+        let mut late = vec![b'x'; 9000];
+        late.push(0);
+        assert!(!is_binary(&late));
+    }
+
+    #[test]
+    fn a_part_that_ran_prints_what_it_did_not_reach() {
+        let note = "36 text file(s) read, 1 skipped as binary and not judged";
+        let printed = line(
+            &with(
+                "line-endings",
+                Outcome::Ran(Duration::ZERO, Some(note.to_owned())),
+            ),
+            12,
+        );
+        assert!(printed.contains("ran"), "{printed}");
+        assert!(printed.contains(note), "{printed}");
     }
 
     #[test]
