@@ -1,0 +1,13 @@
+[package]
+name = "stoffbuch-eval"
+version = "0.0.0"
+description = "The evaluator: a model form and a coefficient set at a condition."
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+stoffbuch = { path = "../stoffbuch" }
+
+[lints]
+workspace = true

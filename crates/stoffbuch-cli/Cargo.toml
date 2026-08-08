@@ -1,0 +1,19 @@
+[package]
+name = "stoffbuch-cli"
+version = "0.0.0"
+description = "The command line: the one binary a person runs."
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "stoffbuch"
+path = "src/main.rs"
+
+[dependencies]
+stoffbuch = { path = "../stoffbuch" }
+stoffbuch-eval = { path = "../stoffbuch-eval" }
+stoffbuch-gate = { path = "../stoffbuch-gate" }
+
+[lints]
+workspace = true

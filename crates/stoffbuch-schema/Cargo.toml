@@ -1,0 +1,13 @@
+[package]
+name = "stoffbuch-schema"
+version = "0.0.0"
+description = "The schema check: refuses a file that is not a well formed row."
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+stoffbuch = { path = "../stoffbuch" }
+
+[lints]
+workspace = true

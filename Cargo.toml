@@ -1,0 +1,31 @@
+[workspace]
+members = ["crates/*"]
+resolver = "3"
+
+[workspace.package]
+edition = "2024"
+# The floor, refused by cargo before the compiler produces a confusing error.
+# The exact toolchain a build uses is pinned in rust-toolchain.toml; this field
+# is what speaks to a build that is not using rustup.
+rust-version = "1.97.0"
+# No crate here is publishable. There is no licence on this repository yet, so
+# there are no terms under which anything could be published, and a manifest
+# that quietly allowed it would be the first place that gap stopped being
+# visible.
+publish = false
+
+# Warnings are errors for the whole workspace, declared once here so a crate
+# cannot opt out by forgetting an attribute. The negative priority puts the
+# group below any single lint a crate later needs to set differently.
+[workspace.lints.rust]
+warnings = { level = "deny", priority = -1 }
+
+[workspace.lints.clippy]
+all = { level = "deny", priority = -1 }
+pedantic = { level = "deny", priority = -1 }
+
+[profile.release]
+# A refusal has to say which subject failed, and a panic that unwinds into a
+# message a person can read is part of that. Aborting would turn the last
+# useful sentence of a failed run into an exit code.
+panic = "unwind"
