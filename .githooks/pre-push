@@ -1,0 +1,14 @@
+#!/bin/sh
+# Runs the gate before a push, so the feedback loop is a minute rather than a
+# round trip through a pull request.
+#
+# It is a convenience a contributor installs, and it is skippable. It is not
+# the enforcement: a clone that never ran `git config core.hooksPath .githooks`
+# does not have it, `--no-verify` skips it, and nothing on the server knows
+# either way.
+#
+# The hook is a shell script because git decides that interface, and it is held
+# to one line of work: it execs the same command a person runs, so there is one
+# procedure rather than two that can drift apart. What the gate examines is
+# printed by the gate.
+exec cargo run --quiet --locked -p stoffbuch-cli -- gate
