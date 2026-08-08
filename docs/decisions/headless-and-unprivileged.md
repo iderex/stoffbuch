@@ -67,11 +67,40 @@ Both halves are needed and neither substitutes for the other. The check catches
 the ordinary mistake early and cheaply. The environment catches the mistake the
 check cannot see, and only after somebody made it.
 
-Nothing refuses any of this today, because there is no code in the tree and no
-check to put it in. Until that exists this record is a rule with nothing behind
-it, and every route in this project passes a test that violates every line above.
-That is the state, and it is written here rather than left for a reader to
-discover from a green run.
+## What is refused today, and what is not
+
+The gate carries a part named `headless` that reads the test code in every
+tracked Rust file and refuses a spelling a test may not reach. What it covers is
+printed by the run rather than listed here:
+
+    cargo run --quiet --locked -p stoffbuch-cli -- gate
+
+It refuses three of the six lines of the rule, and only where the surface is
+written in the ordinary spelling. Reading a display environment variable.
+Reaching the network through a socket type or a name resolution in the standard
+library. Asking for administrative rights, elevation, a service or a scheduled
+task by the name of the thing that grants one.
+
+Three lines are not refused by anything, and a green run says nothing about
+them. Opening a window has no spelling to match, because a rendering library
+opens one through a name that is about drawing rather than about a window.
+Reading or writing a fixed path outside the given temporary directory has no
+arm in the check at all. Requiring a name to resolve inside a dependency is
+invisible for the same reason a window is.
+
+The check reads text a line at a time and carries no parser, so three more ways
+past it are open. A spelling brought in under another name walks through. So
+does a surface reached through a dependency that wraps it. So does test code in
+a file that puts a test module above production code, because what is read is
+everything from the first `#[cfg(test)]` line to the end of the file, plus the
+whole of any file under a `tests/` directory, and that is a convention of this
+repository rather than a fact the check establishes.
+
+So the source half of this rule is partly held and the rest of it is prose. The
+environment half is not held at all yet: nothing runs the suite anywhere except
+on the machine of whoever typed the command, so neither the display
+demonstration nor the unprivileged one has a place to happen. That is the state,
+and it is written here rather than left for a reader to infer from a green run.
 
 ## What this record does not decide
 
