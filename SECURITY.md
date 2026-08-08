@@ -30,10 +30,9 @@ An acknowledgement that the report was read. Then one of two answers: what is
 being changed and where, or why nothing is being changed. You will be told which
 of the two it is rather than left to infer it from silence.
 
-No response time is promised. This project has one maintainer, the work is done
-in stretches, and a stated deadline it cannot hold would be worth less than this
-sentence. A report sitting without an answer means nobody has picked it up yet;
-it does not mean it was judged and dismissed.
+No response time is promised. A deadline stated here and not held would be worth
+less than this sentence, so none is stated. A report sitting without an answer
+means nobody has picked it up yet; it does not mean it was judged and dismissed.
 
 If a fix lands, the advisory is published with the report credited, unless the
 reporter asks not to be.
