@@ -27,3 +27,19 @@
 *.toml          text eol=lf
 *.rs            text eol=lf
 .gitattributes  text eol=lf
+
+# What none of this reaches, written here rather than left to be found.
+#
+# Anything git decides is binary. `text=auto` leaves such a file alone in both
+# directions, and a pattern marked `binary` or `-text` later would sit outside
+# every line above. Nothing is marked either way today, so nothing is currently
+# excluded, and whoever adds the first such pattern owes the reason beside it.
+#
+# And these lines convert rather than refuse, which is not the same guard. They
+# make the bytes right on the way in and on the way out of a clone that honours
+# them; they say nothing about a working copy that was written before they
+# landed, and such a copy keeps its carriage returns until git touches the file
+# again. A file that was fixed on one machine and a file that is right
+# everywhere look identical afterwards. The gate is what refuses the difference,
+# reading the working copy, skipping what these lines skip and counting what it
+# skipped rather than passing over it quietly.
