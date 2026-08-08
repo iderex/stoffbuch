@@ -26,3 +26,9 @@ is in
 [docs/decisions/data-protection-and-what-leaves-the-host.md](docs/decisions/data-protection-and-what-leaves-the-host.md).
 That file is the one home for it, and no check in this repository yet refuses a
 change that would break it.
+
+## License
+
+AGPL-3.0. Copyright 2026 Nils Lehnen.
+
+The full text is in [LICENSE](LICENSE).

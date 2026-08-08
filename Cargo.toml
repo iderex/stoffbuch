@@ -8,10 +8,16 @@ edition = "2024"
 # The exact toolchain a build uses is pinned in rust-toolchain.toml; this field
 # is what speaks to a build that is not using rustup.
 rust-version = "1.97.0"
-# No crate here is publishable. There is no licence on this repository yet, so
-# there are no terms under which anything could be published, and a manifest
-# that quietly allowed it would be the first place that gap stopped being
-# visible.
+# No crate here is publishable. How a release is made and numbered is issue #78
+# and is not settled, so there is nothing a publish would be a release of, and a
+# manifest that quietly allowed one would be the first place that gap stopped
+# being visible. This said the licence was the reason until the licence landed.
+#
+# The repository is licensed under AGPL-3.0 and the text is in LICENSE. No
+# `license` field states it here: the field takes an SPDX expression, the two
+# identifiers for this licence are AGPL-3.0-only and AGPL-3.0-or-later, and
+# which of them holds is stated in a program's own notices, which this
+# repository does not carry. Either one written here would settle that instead.
 publish = false
 
 # Warnings are errors for the whole workspace, declared once here so a crate
