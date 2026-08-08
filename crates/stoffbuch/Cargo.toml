@@ -1,0 +1,10 @@
+[package]
+name = "stoffbuch"
+version = "0.0.0"
+description = "Reads the register: rows, sources, quantities and forms."
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true

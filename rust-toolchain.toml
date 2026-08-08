@@ -1,0 +1,10 @@
+# The toolchain every route resolves to. A version that floats means a build
+# that worked yesterday can fail today for a reason nobody changed.
+#
+# The version is the one the means decision record names, in
+# docs/decisions/means-format-and-language.md. Raising it is a change to this
+# file with its own reason, never something that happens underneath a run.
+[toolchain]
+channel = "1.97.0"
+components = ["clippy", "rustfmt"]
+profile = "minimal"
