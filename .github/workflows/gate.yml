@@ -1,0 +1,69 @@
+# The gate, on the server.
+#
+# It runs the one command and reimplements no part of it. Every leg, the order
+# they run in, and what each one examines are decided in the gate crate, so a
+# run here and a run on somebody's machine are the same procedure rather than
+# two that drift apart. A step here that ran `cargo test` directly would be the
+# second procedure, and the first thing it would lose is the accounting: the
+# gate says what it examined and what it did not, and four steps in a job say
+# only that four steps were green.
+#
+# The job carries an explicit `name`. That name is the check-run name, and a
+# check-run name is the only handle a protection rule has. It is written in
+# docs/the-gate.md as well, so that renaming it is a change to two files a
+# reviewer sees rather than one line nobody reads, and a rule left pointing at a
+# name nothing produces fails open. Requiring the name is issue #75 and is not
+# done here.
+name: gate
+
+on:
+  # Pull requests against any branch, so a release branch is covered the day
+  # there is one, and pushes to the default branch, so the state of main is
+  # readable without opening a pull request.
+  pull_request:
+    branches: ["**"]
+  push:
+    branches: [main]
+
+# Read-only at the workflow level. The gate reads the tree, compiles it and
+# runs its own suite; it writes nothing back. A job that ever needs more asks
+# for it on the job.
+permissions:
+  contents: read
+
+# Cancel a superseded run on the same ref. The gate is a judgement about a
+# tree, and a verdict about a tree nobody is pushing any more is not worth a
+# runner.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  gate:
+    name: The gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The gate asks git which files are tracked, so it needs the working
+          # tree and its index, which a default checkout gives. No step pushes,
+          # so the token is not persisted into .git/config.
+          persist-credentials: false
+
+      - name: Install the pinned toolchain
+        # rust-toolchain.toml names the channel and the components, and rustup
+        # reads that file rather than an argument written here. A version
+        # written into this workflow would be a second pin that can disagree
+        # with the first, and the disagreement would surface as a build that
+        # fails for a reason nobody changed.
+        run: rustup toolchain install --profile minimal
+
+      - name: Run the gate
+        # The whole job. `--locked` is what makes a lock file that does not
+        # match the manifests a refusal here rather than a rewrite: a bare
+        # build updates Cargo.lock and carries on, which is how two people
+        # build different things from one commit.
+        run: cargo run --quiet --locked -p stoffbuch-cli -- gate
