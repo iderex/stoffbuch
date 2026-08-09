@@ -6,7 +6,3 @@
 //! argument list or an exit code.
 //!
 //! Empty until the schema exists.
-
-// A deliberate defect, to prove the check on the server goes red for it. It is
-// reverted by the next commit on this branch.
-pub fn   badly_spaced ( ) {}
