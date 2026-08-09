@@ -9,4 +9,4 @@
 
 // A deliberate defect, to prove the check on the server goes red for it. It is
 // reverted by the next commit on this branch.
-fn   badly_spaced ( ) {}
+pub fn   badly_spaced ( ) {}
