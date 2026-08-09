@@ -14,6 +14,8 @@
 //! `docs/decisions/static-analysis-and-the-refusal-surface.md` is where that
 //! is argued and where this line is given its meaning.
 
+mod canonical;
+
 use std::fmt::Write as _;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
@@ -88,7 +90,7 @@ enum Runs {
 
 /// What a check this repository owns found.
 #[derive(Debug, Clone, PartialEq, Eq)]
-enum Judged {
+pub(crate) enum Judged {
     /// Nothing refused. The note, where there is one, says what the check did
     /// not reach.
     Nothing(Option<String>),
@@ -159,6 +161,11 @@ const PARTS: &[Part] = &[
             "--all-targets",
             "--locked",
         ]),
+    },
+    Part {
+        name: "canonical",
+        examines: "every tracked record under register/, against the form the register is stored in",
+        runs: Runs::Check(canonical::every_record_is_in_the_canonical_form),
     },
     Part {
         name: "schema",
@@ -329,7 +336,7 @@ fn no_carriage_return(root: &Path) -> Judged {
 /// git is asked rather than the directory walked, because what is tracked is
 /// git's answer and a walk would judge whatever a working directory happens to
 /// be holding.
-fn tracked(root: &Path) -> Result<Vec<String>, String> {
+pub(crate) fn tracked(root: &Path) -> Result<Vec<String>, String> {
     let listed = Command::new("git")
         .args(["ls-files", "-z"])
         .current_dir(root)

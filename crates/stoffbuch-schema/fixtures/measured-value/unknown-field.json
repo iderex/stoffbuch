@@ -1,4 +1,5 @@
 {
+  "comment": "the sample looked poor",
   "conditions": {
     "doping": "not-stated",
     "temperature": {
@@ -6,7 +7,6 @@
       "unit": "K"
     }
   },
-  "comment": "the sample looked poor",
   "id": "sb-ZZZZZZZZZZ",
   "kind": "measured-value",
   "material": {
