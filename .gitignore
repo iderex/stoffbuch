@@ -1,1 +1,6 @@
 /target
+# Where a mutation run writes its own working copies and its outcome files.
+# It is a run's output rather than a part of the tree, and a tracked copy of it
+# would be a measurement frozen at whatever day somebody last committed it.
+/mutants.out
+/mutants.out.old

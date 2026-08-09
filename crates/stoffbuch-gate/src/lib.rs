@@ -757,27 +757,11 @@ fn the_refusal_surface_is_named(root: &Path) -> Judged {
         Ok(tracked) => tracked,
         Err(why) => return Judged::CouldNotJudge(why),
     };
-
-    let mut disagreeing = Vec::new();
-    let mut surface = Vec::new();
-    let mut read = 0_usize;
-
-    for name in tracked.iter().filter(|name| is_rust(name)) {
-        let Ok(text) = std::fs::read_to_string(root.join(name)) else {
-            continue;
-        };
-        read += 1;
-        match names_itself(&text) {
-            (true, true) => surface.push(name.clone()),
-            (false, true) => disagreeing.push(format!(
-                "  {name}\n      decides a refusal and its module documentation does not say so"
-            )),
-            (true, false) => disagreeing.push(format!(
-                "  {name}\n      says it decides refusals and decides none"
-            )),
-            (false, false) => {}
-        }
-    }
+    let Survey {
+        surface,
+        disagreeing,
+        read,
+    } = survey_the_surface(root, &tracked);
 
     if !disagreeing.is_empty() {
         let mut why = format!(
@@ -808,6 +792,73 @@ fn the_refusal_surface_is_named(root: &Path) -> Judged {
         )
     };
     Judged::Nothing(Some(note))
+}
+
+/// What one walk over the tracked Rust files found about the surface.
+struct Survey {
+    /// The files that name themselves part of it and decide a refusal.
+    surface: Vec<String>,
+    /// The files whose documentation and code say different things, each with
+    /// which of the two directions it went.
+    disagreeing: Vec<String>,
+    /// How many files were read, so a count in the report is not inferred from
+    /// how many the tree happens to hold.
+    read: usize,
+}
+
+/// Reads every tracked Rust file and places it against the surface marker.
+///
+/// The walk is here rather than inside the check because two callers need the
+/// same answer: the check, which refuses a disagreement, and the command that
+/// prints the surface for a coverage bar or a mutation run to be pointed at. A
+/// second walk would be a second definition of what the surface is, and the
+/// one that drifts is always the one nobody runs.
+fn survey_the_surface(root: &Path, tracked: &[String]) -> Survey {
+    let mut disagreeing = Vec::new();
+    let mut surface = Vec::new();
+    let mut read = 0_usize;
+
+    for name in tracked.iter().filter(|name| is_rust(name)) {
+        let Ok(text) = std::fs::read_to_string(root.join(name)) else {
+            continue;
+        };
+        read += 1;
+        match names_itself(&text) {
+            (true, true) => surface.push(name.clone()),
+            (false, true) => disagreeing.push(format!(
+                "  {name}\n      decides a refusal and its module documentation does not say so"
+            )),
+            (true, false) => disagreeing.push(format!(
+                "  {name}\n      says it decides refusals and decides none"
+            )),
+            (false, false) => {}
+        }
+    }
+
+    Survey {
+        surface,
+        disagreeing,
+        read,
+    }
+}
+
+/// Every tracked file that names itself part of the refusal surface.
+///
+/// This is what a coverage bar and a mutation run are pointed at, and it is
+/// derived from the same marker the `surface` part of the gate reads rather
+/// than from a list in a configuration file. A list would be a second home for
+/// a set that moves whenever a file starts or stops deciding refusals, and the
+/// run that used the stale copy would report a clean score over code it never
+/// touched.
+///
+/// # Errors
+///
+/// Returns the reason the tracked list could not be had. A caller that took an
+/// empty list for an answer would point a run at nothing and read the result as
+/// a surface with no survivors.
+pub fn refusal_surface(root: &Path) -> Result<Vec<String>, String> {
+    let tracked = tracked(root)?;
+    Ok(survey_the_surface(root, &tracked).surface)
 }
 
 /// Whether a file's module documentation names it as part of the refusal
@@ -1041,11 +1092,16 @@ fn secs(took: Duration) -> String {
 /// The closing count, which says what the run covered rather than only whether
 /// it was green. A run that examined less than the whole set says so here.
 fn tail(results: &[Reported]) -> String {
-    let mut ran = 0;
-    let mut skipped = 0;
-    let mut refused = 0;
-    let mut unknown = 0;
-    let mut not_reached = 0;
+    // Counted in an unsigned type on purpose. These only ever go up, and left
+    // to be inferred they are signed, so a negated increment produces a
+    // plausible line instead of stopping the run. A mutation run found exactly
+    // that: the tail printed `-1 ran` and the test that covers this function
+    // could not tell the count from its negation.
+    let mut ran = 0_usize;
+    let mut skipped = 0_usize;
+    let mut refused = 0_usize;
+    let mut unknown = 0_usize;
+    let mut not_reached = 0_usize;
     for result in results {
         match result.outcome {
             Outcome::Ran(..) => ran += 1,
@@ -1212,18 +1268,23 @@ mod tests {
 
     #[test]
     fn the_tail_counts_every_part_in_one_of_its_classes() {
+        // One part per class, and the whole line compared. This test used to
+        // ask whether the line contained `1 ran`, which `-1 ran` also contains,
+        // so the count could be negated and stay green: a mutation run over
+        // this file found it, and the accounting is the property the whole
+        // report rests on.
         let results = [
             ran("format"),
             with("lint", Outcome::Failed(Duration::ZERO, String::new())),
             with("schema", Outcome::Skipped("a schema exists")),
             with("tests", Outcome::NotReached),
+            with("clippy", Outcome::Unstartable("no such program".to_owned())),
         ];
-        let tail = tail(&results);
-        assert!(tail.contains("4 part(s)"), "{tail}");
-        assert!(tail.contains("1 ran"), "{tail}");
-        assert!(tail.contains("1 skipped"), "{tail}");
-        assert!(tail.contains("1 refused"), "{tail}");
-        assert!(tail.contains("1 not reached"), "{tail}");
+        assert_eq!(
+            tail(&results),
+            "\ncould not judge: 5 part(s), 1 ran, 1 skipped, 1 refused, \
+             1 could not be started, 1 not reached\n"
+        );
     }
 
     #[test]
@@ -1724,5 +1785,381 @@ body
             "[workspace.package]\nedition = \"2024\"\n"
         ));
         assert!(!declares_a_workspace("[workspace.lints.rust]\n"));
+    }
+
+    // The checks, given a tree.
+    //
+    // Everything above this line is a pure function handed its bytes. Each
+    // check itself takes a path and asks git what is tracked, so the only way
+    // to give one a subject is to build a tree and index it. A mutation run
+    // over this file measured what that costs: the counters behind the
+    // accounting, the guards that choose between refusing and passing, and the
+    // line numbers a refusal prints were all reachable only by a real run, so a
+    // negated counter or an inverted guard left the suite green.
+    //
+    // The counts are compared whole rather than searched for. A substring
+    // assertion cannot tell a count from its negation, which is how the tail
+    // was covered and still passed with `ran` counting downwards.
+
+    /// A tree on disk with a git index, removed when it goes out of scope.
+    struct Tree(PathBuf);
+
+    impl Tree {
+        fn at(&self) -> &Path {
+            &self.0
+        }
+    }
+
+    impl Drop for Tree {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    /// A directory of this process's own, named for the test that asked.
+    ///
+    /// The tests run in parallel in one process, so the name separates them
+    /// from each other and the process id separates one run from the next.
+    fn somewhere(named: &str) -> PathBuf {
+        let at = std::env::temp_dir().join(format!("stoffbuch-{}-{named}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&at);
+        std::fs::create_dir_all(&at).expect("a directory under the temporary directory");
+        at
+    }
+
+    /// Builds a tree of `files` and indexes it, so `tracked` has an answer.
+    fn a_tree(named: &str, files: &[(&str, &[u8])]) -> Tree {
+        let at = somewhere(named);
+        for (name, bytes) in files {
+            let path = at.join(name);
+            std::fs::create_dir_all(path.parent().expect("a file in a tree has a parent"))
+                .expect("a directory in the temporary tree");
+            std::fs::write(&path, bytes).expect("a file in the temporary tree");
+        }
+        git(&at, &["init", "--quiet"]);
+        // The working copy is what the line-ending check reads, so nothing on
+        // the way into the index may rewrite a byte of it. Left to the clone's
+        // configuration, a carriage return fixture is normalised away on the
+        // machine where the guard matters most.
+        git(
+            &at,
+            &[
+                "-c",
+                "core.autocrlf=false",
+                "-c",
+                "core.safecrlf=false",
+                "add",
+                "--all",
+            ],
+        );
+        Tree(at)
+    }
+
+    fn git(at: &Path, arguments: &[&str]) {
+        let done = Command::new("git")
+            .args(arguments)
+            .current_dir(at)
+            .output()
+            .expect("git is on the path, since every check here asks it what is tracked");
+        assert!(
+            done.status.success(),
+            "git {arguments:?}: {}",
+            String::from_utf8_lossy(&done.stderr)
+        );
+    }
+
+    /// What a check said when it refused nothing.
+    fn note(judged: Judged) -> String {
+        match judged {
+            Judged::Nothing(Some(note)) => note,
+            other => panic!("expected a clean verdict carrying a note, and got {other:?}"),
+        }
+    }
+
+    /// What a check wrote when it refused.
+    fn refusal(judged: Judged) -> String {
+        match judged {
+            Judged::Refused(why) => why,
+            other => panic!("expected a refusal, and got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_clean_tree_is_reported_with_the_count_of_what_was_read_and_nothing_else() {
+        let tree = a_tree(
+            "line-endings-clean",
+            &[("a.md", b"one\n"), ("b/c.md", b"two\n")],
+        );
+        assert_eq!(note(no_carriage_return(tree.at())), "2 text file(s) read");
+    }
+
+    #[test]
+    fn a_file_with_a_zero_byte_is_counted_as_skipped_rather_than_read() {
+        let tree = a_tree(
+            "line-endings-binary",
+            &[("a.md", b"one\n"), ("b.bin", b"\x00\x01\x02")],
+        );
+        assert_eq!(
+            note(no_carriage_return(tree.at())),
+            "1 text file(s) read, 1 skipped as binary and not judged"
+        );
+    }
+
+    #[test]
+    fn a_tracked_file_absent_from_the_working_copy_is_counted_rather_than_passed_over() {
+        let tree = a_tree(
+            "line-endings-absent",
+            &[("a.md", b"one\n"), ("gone.md", b"two\n")],
+        );
+        std::fs::remove_file(tree.at().join("gone.md")).expect("a file this test just wrote");
+        assert_eq!(
+            note(no_carriage_return(tree.at())),
+            "1 text file(s) read, 1 tracked but not in the working copy"
+        );
+    }
+
+    #[test]
+    fn a_carriage_return_in_the_working_copy_is_refused_and_the_file_is_named() {
+        let tree = a_tree(
+            "line-endings-carriage-return",
+            &[("a.md", b"one\n"), ("b.md", b"two\r\nthree\n")],
+        );
+        let why = refusal(no_carriage_return(tree.at()));
+        assert!(
+            why.contains("1 tracked text file(s) carry a carriage return"),
+            "{why}"
+        );
+        assert!(why.contains("  b.md"), "{why}");
+    }
+
+    #[test]
+    fn a_directory_git_knows_nothing_about_is_not_reported_as_a_clean_tree() {
+        // The near miss for the whole apparatus. `git ls-files` fails here, and
+        // a check that read a failure as an empty list would report every
+        // subject clean without having seen one of them. The temporary
+        // directory is outside any checkout, which is what makes git fail
+        // rather than answer about somebody else's tree.
+        let at = somewhere("not-a-repository");
+        let judged = no_carriage_return(&at);
+        let _ = std::fs::remove_dir_all(&at);
+        assert!(
+            matches!(judged, Judged::CouldNotJudge(_)),
+            "expected a run that could not judge, and got {judged:?}"
+        );
+    }
+
+    #[test]
+    fn the_test_surface_check_counts_the_rust_files_and_leaves_the_rest() {
+        let tree = a_tree(
+            "headless-count",
+            &[
+                ("a.rs", b"fn a() {}\n"),
+                ("b/c.rs", b"fn c() {}\n"),
+                ("d.md", b"not rust\n"),
+            ],
+        );
+        assert_eq!(
+            note(a_test_reaches_nothing_it_may_not(tree.at())),
+            "2 tracked Rust file(s) read, test code only"
+        );
+    }
+
+    /// A tree carrying one held record, one unheld record, and a readme.
+    ///
+    /// The readme and the ordinary document are the two files that separate
+    /// "a record under the records directory" from "any document anywhere". A
+    /// check that read either as a record would refuse this tree, since neither
+    /// carries the header a record is read for.
+    fn an_invariant_tree(named: &str, extra: &[(&str, &[u8])]) -> Tree {
+        let mut files: Vec<(&str, &[u8])> = vec![
+            (
+                "docs/invariants/README.md",
+                b"# The records\n\nProse about the shape of one, and not a record.\n",
+            ),
+            (
+                "docs/invariants/fixture-invariant.md",
+                b"Id: fixture-invariant\nHeld: yes\nSubject: crates/\nSpelling: zzq-forbidden\n\
+                  Retired-by: nothing, it is a fixture.\n\
+                  Rule: this spelling may not appear under crates/ in the fixture tree.\n\n\
+                  The body says what failure it prevents.\n",
+            ),
+            (
+                "docs/invariants/fixture-unheld.md",
+                b"Id: fixture-unheld\nHeld: no\nRetired-by: nothing, it is a fixture.\n\
+                  Rule: a rule no search of the tree can hold.\n\n\
+                  The body says why it cannot be held this way.\n",
+            ),
+            ("docs/elsewhere.md", b"An ordinary document.\n"),
+            ("crates/clean.rs", b"fn a() {}\n"),
+        ];
+        files.extend_from_slice(extra);
+        a_tree(named, &files)
+    }
+
+    #[test]
+    fn a_tree_breaking_no_invariant_says_how_many_are_held_unheld_and_searched() {
+        let tree = an_invariant_tree("invariants-clean", &[]);
+        assert_eq!(
+            note(no_invariant_is_broken(tree.at())),
+            "1 held, 1 recorded as not holdable this way, 1 file(s) searched"
+        );
+    }
+
+    #[test]
+    fn a_broken_invariant_is_refused_at_the_line_it_is_on() {
+        let tree = an_invariant_tree(
+            "invariants-broken",
+            &[(
+                "crates/breaks.rs",
+                b"fn a() {}\n\nfn b() { let x = ZZQ-FORBIDDEN; }\n",
+            )],
+        );
+        let why = refusal(no_invariant_is_broken(tree.at()));
+        assert!(why.contains("1 line(s) break an invariant"), "{why}");
+        assert!(why.contains("crates/breaks.rs:3"), "{why}");
+        assert!(why.contains("fixture-invariant"), "{why}");
+        assert!(
+            why.contains("this spelling may not appear under crates/"),
+            "{why}"
+        );
+    }
+
+    #[test]
+    fn the_surface_is_the_files_that_name_themselves_and_the_rest_are_counted() {
+        let judges = a_file(
+            &format!("//! A check.\n//!\n//! {SURFACE}"),
+            "return Judged::Refused(why);",
+        );
+        let quiet = a_file("//! Not a check.", "return 1;");
+        let tree = a_tree(
+            "surface-count",
+            &[
+                ("crates/judge.rs", judges.as_bytes()),
+                ("crates/quiet.rs", quiet.as_bytes()),
+                ("docs/note.md", b"not rust\n"),
+            ],
+        );
+        assert_eq!(
+            note(the_refusal_surface_is_named(tree.at())),
+            "2 tracked Rust file(s) read, 1 in the refusal surface: crates/judge.rs"
+        );
+    }
+
+    #[test]
+    fn the_command_that_prints_the_surface_prints_the_same_files_the_check_placed() {
+        let judges = a_file(
+            &format!("//! A check.\n//!\n//! {SURFACE}"),
+            "return Judged::Refused(why);",
+        );
+        let quiet = a_file("//! Not a check.", "return 1;");
+        let tree = a_tree(
+            "surface-printed",
+            &[
+                ("crates/judge.rs", judges.as_bytes()),
+                ("crates/quiet.rs", quiet.as_bytes()),
+            ],
+        );
+        assert_eq!(
+            refusal_surface(tree.at()).expect("a tree git can be asked about"),
+            vec!["crates/judge.rs".to_owned()],
+            "the scope a mutation run is given is what the check placed, or the two drift"
+        );
+    }
+
+    /// The spelling that turns a finding off, on a line that names a record.
+    ///
+    /// Written in halves for the same reason `SUPPRESSIONS` is: this file is
+    /// under a subject the check reads, and a whole one here would be a
+    /// suppression naming no record, sitting inside the check that refuses one.
+    const NAMES_A_RECORD: &str = concat!(
+        "    #[all",
+        "ow(clippy::needless_range_loop)] // docs/accepted-findings/why.md"
+    );
+
+    /// The same spelling with nothing beside it.
+    const NAMES_NOTHING: &str = concat!("    #[all", "ow(clippy::needless_range_loop)]");
+
+    #[test]
+    fn a_suppression_and_the_record_it_names_are_counted_and_nothing_is_refused() {
+        let thing = format!("fn a() {{}}\n\n{NAMES_A_RECORD}\nfn b() {{}}\n");
+        let tree = a_tree(
+            "findings-clean",
+            &[
+                (
+                    "docs/accepted-findings/README.md",
+                    b"# Accepted findings\n\nProse, and not a record.\n",
+                ),
+                (
+                    "docs/accepted-findings/why.md",
+                    b"The finding, and the argument for accepting it.\n",
+                ),
+                ("crates/thing.rs", thing.as_bytes()),
+                (".github/workflows/w.yml", b"name: w\n"),
+                ("docs/note.md", b"outside the subject\n"),
+            ],
+        );
+        assert_eq!(
+            note(every_accepted_finding_is_recorded(tree.at())),
+            "2 file(s) searched, 1 suppression(s), 1 record(s)"
+        );
+    }
+
+    #[test]
+    fn a_suppression_naming_no_record_is_refused_at_the_line_it_is_on() {
+        let thing = format!("fn a() {{}}\n\n{NAMES_NOTHING}\nfn b() {{}}\n");
+        let tree = a_tree(
+            "findings-unrecorded",
+            &[("crates/thing.rs", thing.as_bytes())],
+        );
+        let why = refusal(every_accepted_finding_is_recorded(tree.at()));
+        assert!(
+            why.contains("1 finding(s) turned off with the reason nowhere"),
+            "{why}"
+        );
+        assert!(why.contains("crates/thing.rs:3"), "{why}");
+    }
+
+    #[test]
+    fn a_record_no_suppression_names_any_more_is_refused_from_the_other_side() {
+        // The register describes the tree rather than its own history, so it
+        // fails closed in both directions. A reason left behind for something
+        // that is no longer there reads as an accepted finding and is not one.
+        let tree = a_tree(
+            "findings-dangling",
+            &[
+                (
+                    "docs/accepted-findings/why.md",
+                    b"The finding, and the argument for accepting it.\n",
+                ),
+                ("crates/thing.rs", b"fn a() {}\n"),
+            ],
+        );
+        let why = refusal(every_accepted_finding_is_recorded(tree.at()));
+        assert!(
+            why.contains(
+                "docs/accepted-findings/why.md accepts a finding that nothing suppresses any more."
+            ),
+            "{why}"
+        );
+    }
+
+    #[test]
+    fn every_verdict_starts_at_the_same_column_whatever_the_part_is_called() {
+        // The padding is what makes the report a column a reader runs down
+        // rather than a ragged list. A width of nought or one leaves each
+        // verdict at its own part's name length, so the parts stop agreeing.
+        let longest = PARTS
+            .iter()
+            .map(|part| part.name.len())
+            .max()
+            .expect("the gate has parts");
+        let columns: Vec<Option<usize>> = PARTS
+            .iter()
+            .map(|part| line(&ran(part.name), width()).find("  ran"))
+            .collect();
+        assert!(
+            columns.iter().all(|at| *at == Some(longest)),
+            "the verdicts do not line up: {columns:?} against a longest name of {longest}"
+        );
     }
 }
