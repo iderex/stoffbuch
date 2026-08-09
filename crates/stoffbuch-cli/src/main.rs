@@ -11,12 +11,15 @@ use std::process::ExitCode;
 use stoffbuch_gate::Exit;
 
 /// What the command understands, printed when it is given something else.
-const USAGE: &str = "usage: stoffbuch gate
+const USAGE: &str = "usage: stoffbuch <gate|surface>
 
-gate  run every part of the gate over the workspace this command was run in,
-      in order, stopping at the first failure, and say what was examined
+gate     run every part of the gate over the workspace this command was run in,
+         in order, stopping at the first failure, and say what was examined
 
-exit  0 nothing was refused, 1 something was refused, 2 could not judge
+surface  print the tracked files that decide refusals, one per line, so that a
+         coverage bar or a mutation run reads the surface rather than a list
+
+exit     0 nothing was refused, 1 something was refused, 2 could not judge
 ";
 
 fn main() -> ExitCode {
@@ -25,6 +28,8 @@ fn main() -> ExitCode {
 
     let verdict = if given.as_slice() == ["gate"] {
         gate()
+    } else if given.as_slice() == ["surface"] {
+        surface()
     } else {
         // Arguments the command does not understand are `2` rather than `1`: a
         // caller that reads a broken invocation as a clean refusal is wrong in
@@ -35,18 +40,53 @@ fn main() -> ExitCode {
     ExitCode::from(verdict.code())
 }
 
-/// Runs the gate over the workspace the command was run in.
-fn gate() -> Exit {
+/// The workspace the command was run in, or the reason there is none.
+fn root() -> Option<std::path::PathBuf> {
     let Ok(here) = std::env::current_dir() else {
         let _ = writeln!(std::io::stderr(), "the working directory could not be read");
-        return Exit::CouldNotJudge;
+        return None;
     };
-    let Some(root) = stoffbuch_gate::workspace_root(&here) else {
+    let found = stoffbuch_gate::workspace_root(&here);
+    if found.is_none() {
         let _ = writeln!(
             std::io::stderr(),
             "no workspace at or above {}, so there is no tree to judge",
             here.display()
         );
+    }
+    found
+}
+
+/// Prints the files that decide refusals, one per line.
+///
+/// One per line and nothing else, because what reads this is a shell loop
+/// building the arguments of another run. A heading or a count here would end
+/// up as a file name that does not exist, and the run pointed at it would say
+/// it found nothing.
+fn surface() -> Exit {
+    let Some(root) = root() else {
+        return Exit::CouldNotJudge;
+    };
+    match stoffbuch_gate::refusal_surface(&root) {
+        Ok(surface) => {
+            let mut out = std::io::stdout();
+            for name in &surface {
+                if writeln!(out, "{name}").is_err() {
+                    return Exit::CouldNotJudge;
+                }
+            }
+            Exit::Clean
+        }
+        Err(why) => {
+            let _ = writeln!(std::io::stderr(), "the surface could not be read: {why}");
+            Exit::CouldNotJudge
+        }
+    }
+}
+
+/// Runs the gate over the workspace the command was run in.
+fn gate() -> Exit {
+    let Some(root) = root() else {
         return Exit::CouldNotJudge;
     };
 
