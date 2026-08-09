@@ -1,0 +1,54 @@
+{
+  "conditions": {
+    "doping": "not-stated",
+    "temperature": {
+      "digits": "300",
+      "unit": "K"
+    }
+  },
+  "comment": "the sample looked poor",
+  "id": "sb-ZZZZZZZZZZ",
+  "kind": "measured-value",
+  "material": {
+    "composition": [
+      {
+        "basis": "nominal",
+        "element": "Xx",
+        "fraction": "1",
+        "sublattice": "the only one"
+      }
+    ],
+    "crystalline-state": "single-crystal",
+    "phase": "fixture phase",
+    "preparation": "Invented for this fixture and grown nowhere."
+  },
+  "provenance": {
+    "chain": [
+      {
+        "read": true,
+        "source": "fixture source"
+      }
+    ],
+    "extraction": "transcribed",
+    "locator": "fixture locator"
+  },
+  "quantity": "fixture quantity",
+  "uncertainty": {
+    "interpretation": [
+      "assumed-standard"
+    ],
+    "normalised": {
+      "digits": "0.020",
+      "unit": "eV"
+    },
+    "printed": {
+      "digits": "0.020",
+      "shape": "symmetric"
+    }
+  },
+  "value": {
+    "digits": "3.4200",
+    "unit": "eV"
+  },
+  "version": 1
+}
