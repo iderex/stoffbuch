@@ -160,10 +160,10 @@ Sign off on your commits:
     git commit -s
 
 That puts a `Signed-off-by` trailer on the commit matching its author, and a
-pull request is refused without one on every non-merge commit. The sign-off
-asserts the Developer Certificate of Origin, whose text is meant to sit at
-`./DCO` in this tree. It is not there, so today a sign-off points at a file that
-does not exist, and issue #109 is where that is being fixed.
+pull request is refused without one on every non-merge commit. What the trailer
+asserts is the text in [DCO](DCO) at the root of this tree, which is the
+Developer Certificate of Origin at version 1.1. Read it before you sign
+anything: the trailer is short and what it commits you to is not in it.
 
 A commit message states what changed and what failure it prevents. Where you are
 correcting something, it says what was wrong and how it was found. One topic per
