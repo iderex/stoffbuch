@@ -96,11 +96,26 @@ everything from the first `#[cfg(test)]` line to the end of the file, plus the
 whole of any file under a `tests/` directory, and that is a convention of this
 repository rather than a fact the check establishes.
 
-So the source half of this rule is partly held and the rest of it is prose. The
-environment half is not held at all yet: nothing runs the suite anywhere except
-on the machine of whoever typed the command, so neither the display
-demonstration nor the unprivileged one has a place to happen. That is the state,
-and it is written here rather than left for a reader to infer from a green run.
+So the source half of this rule is partly held and the rest of it is prose.
+
+The environment half is not held either, and the reason has changed. It used to
+be that the suite ran nowhere except on the machine of whoever typed the command,
+so neither demonstration had a place to happen. It has one now. The gate runs on
+a hosted Linux runner on every pull request and every push to the default branch,
+and the suite is one of its parts, so every change is compiled and tested on a
+machine nobody here controls.
+
+What that place proves has not been read. Nobody has asked that runner whether a
+display server is attached, what rights the account it runs as can obtain, or
+what a test would find if it asked for one. The suite passing there is evidence
+that the suite passes there, and nothing else. A green run on a second machine is
+the easiest thing in this record to mistake for the demonstration, because it
+looks like one: it is a different machine, it is not the author's, and the tests
+pass. The demonstration is a machine known to have none of these things, asserted
+about rather than assumed, and there is no such assertion anywhere in this tree.
+
+That is the state, and it is written here rather than left for a reader to infer
+from a green run.
 
 ## What this record does not decide
 

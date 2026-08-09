@@ -133,7 +133,11 @@ changed with it rather than left to drift.
 ## What this file does not cover
 
 It does not list the checks this repository runs. Those are printed by the gate
-command, which does not exist yet and is issue #15.
+command:
+
+    cargo run --quiet --locked -p stoffbuch-cli -- gate
+
+This sentence said the command did not exist until it landed.
 
 It does not decide the terms a contribution is accepted under. The repository is
 licensed under AGPL-3.0, and the text is in [LICENSE](LICENSE); this paragraph
