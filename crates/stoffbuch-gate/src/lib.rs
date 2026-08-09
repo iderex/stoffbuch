@@ -8,6 +8,11 @@
 //! The set of parts lives here and nowhere else. A document that listed them
 //! would drift against this file the first time a part is added, so a document
 //! that needs to talk about the set points at the command instead.
+//!
+//! Refusal surface. This file decides whether a subject is refused, which is
+//! the code held to a higher standard than the rest of the tree, and
+//! `docs/decisions/static-analysis-and-the-refusal-surface.md` is where that
+//! is argued and where this line is given its meaning.
 
 use std::fmt::Write as _;
 use std::io::{self, Write};
@@ -124,6 +129,16 @@ const PARTS: &[Part] = &[
         name: "invariants",
         examines: "every tracked file a record names, for a rule no schema can express",
         runs: Runs::Check(no_invariant_is_broken),
+    },
+    Part {
+        name: "surface",
+        examines: "every tracked Rust file, for whether it says it decides refusals",
+        runs: Runs::Check(the_refusal_surface_is_named),
+    },
+    Part {
+        name: "findings",
+        examines: "every tracked file under crates/ and .github/, for a finding turned off with no record",
+        runs: Runs::Check(every_accepted_finding_is_recorded),
     },
     Part {
         name: "format",
@@ -427,12 +442,7 @@ fn a_test_reaches_nothing_it_may_not(root: &Path) -> Judged {
     let mut offences = Vec::new();
     let mut read = 0_usize;
 
-    let rust = tracked.iter().filter(|name| {
-        Path::new(name)
-            .extension()
-            .is_some_and(|extension| extension.eq_ignore_ascii_case("rs"))
-    });
-    for name in rust {
+    for name in tracked.iter().filter(|name| is_rust(name)) {
         let Ok(text) = std::fs::read_to_string(root.join(name)) else {
             continue;
         };
@@ -458,6 +468,13 @@ fn a_test_reaches_nothing_it_may_not(root: &Path) -> Judged {
          the move is the repair\nrather than an exception."
     );
     Judged::Refused(why)
+}
+
+/// Whether a tracked path is a Rust source file.
+fn is_rust(name: &str) -> bool {
+    Path::new(name)
+        .extension()
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("rs"))
 }
 
 /// Whether every line of a file is test code.
@@ -695,6 +712,257 @@ fn read_invariant(name: &str, text: &str) -> Result<Option<Invariant>, String> {
         spellings,
         rule,
     }))
+}
+
+/// The line in a file's own module documentation that puts it in the refusal
+/// surface.
+const SURFACE: &str = "Refusal surface.";
+
+/// The spelling a refusal in this tree is written with.
+///
+/// There is one, because there is one way to refuse a subject. A second
+/// spelling would be a second surface, and nothing would be naming it.
+const REFUSAL: &str = "Judged::Refused";
+
+/// Refuses a file that decides a refusal without saying so, and a file that
+/// says so and decides none.
+///
+/// The code that decides whether a subject is refused is what this project
+/// holds to a higher standard than the rest, because a check that fails open
+/// lets a wrong number into the register and every result computed from that
+/// row inherits it. Naming that code is what a coverage bar and a mutation run
+/// are pointed at, and this part prints the names rather than a document
+/// holding a list somebody has to remember to update.
+///
+/// Both directions are refused. An unmarked file that decides a refusal is a
+/// piece of the surface nothing downstream would reach; a marked file that
+/// decides none widens the surface until it names most of the tree, and a
+/// standard that covers everything is one nobody meets.
+///
+/// The limits are stated in
+/// `docs/decisions/static-analysis-and-the-refusal-surface.md` and are real:
+/// this names a file rather than a function, and it reads text, so a file that
+/// merely matches on a refusal is asked for the line too. Both of those name
+/// more of the surface rather than less, which is the direction that hides no
+/// hole.
+fn the_refusal_surface_is_named(root: &Path) -> Judged {
+    let tracked = match tracked(root) {
+        Ok(tracked) => tracked,
+        Err(why) => return Judged::CouldNotJudge(why),
+    };
+
+    let mut disagreeing = Vec::new();
+    let mut surface = Vec::new();
+    let mut read = 0_usize;
+
+    for name in tracked.iter().filter(|name| is_rust(name)) {
+        let Ok(text) = std::fs::read_to_string(root.join(name)) else {
+            continue;
+        };
+        read += 1;
+        match names_itself(&text) {
+            (true, true) => surface.push(name.clone()),
+            (false, true) => disagreeing.push(format!(
+                "  {name}\n      decides a refusal and its module documentation does not say so"
+            )),
+            (true, false) => disagreeing.push(format!(
+                "  {name}\n      says it decides refusals and decides none"
+            )),
+            (false, false) => {}
+        }
+    }
+
+    if !disagreeing.is_empty() {
+        let mut why = format!(
+            "{} file(s) disagree with what they say about the refusal surface:\n\n",
+            disagreeing.len()
+        );
+        for one in &disagreeing {
+            let _ = writeln!(why, "{one}");
+        }
+        let _ = writeln!(
+            why,
+            "\nA file that decides a refusal says so in its own module documentation, in \
+             a\nline reading `{SURFACE}`. What that line means and what it cannot do are \
+             in\ndocs/decisions/static-analysis-and-the-refusal-surface.md. The scope a \
+             coverage\nbar and a mutation run are given is what this part prints, so a file \
+             missing\nfrom it is a file neither of them ever reaches."
+        );
+        return Judged::Refused(why);
+    }
+
+    let note = if surface.is_empty() {
+        format!("{read} tracked Rust file(s) read, none in the refusal surface")
+    } else {
+        format!(
+            "{read} tracked Rust file(s) read, {} in the refusal surface: {}",
+            surface.len(),
+            surface.join(" ")
+        )
+    };
+    Judged::Nothing(Some(note))
+}
+
+/// Whether a file's module documentation names it as part of the refusal
+/// surface, and whether its own code decides a refusal.
+///
+/// What is read is everything above the first `#[cfg(test)]`, which is where
+/// this repository puts a test module. A fixture is a refusal written down to
+/// be read rather than one a run acts on, and a suite that put itself in the
+/// surface would make the surface mostly suite.
+///
+/// A comment mentioning the spelling is not a decision, so only lines that are
+/// not comments are read for it. That is what lets this file argue about a
+/// refusal in prose without every such file joining the surface.
+fn names_itself(text: &str) -> (bool, bool) {
+    let mut named = false;
+    let mut decides = false;
+    for raw in text.lines() {
+        let line = raw.trim_start();
+        if line.starts_with("#[cfg(test)]") {
+            break;
+        }
+        if line.starts_with("//!") {
+            named |= line.contains(SURFACE);
+        } else if !line.starts_with("//") {
+            decides |= line.contains(REFUSAL);
+        }
+    }
+    (named, decides)
+}
+
+/// Where a finding accepted rather than fixed is recorded.
+const ACCEPTED: &str = "docs/accepted-findings/";
+
+/// The spellings that turn a finding off rather than fixing it.
+///
+/// Each is assembled from two halves. This file sits under a subject the check
+/// reads, so a spelling written whole here would be a suppression naming no
+/// record, inside the check that refuses one.
+const SUPPRESSIONS: &[&str] = &[
+    concat!("#[all", "ow("),
+    concat!("#[exp", "ect("),
+    concat!("zizmor:", " ignore"),
+];
+
+/// Refuses a suppression that names no record, and a record no suppression
+/// names.
+///
+/// A finding an analyser raises is either fixed or accepted, and an accepted
+/// one is an argument that has to outlive the tool that raised it. A dismissal
+/// held in a tool's own interface goes when the tool goes, and what a later
+/// reader needs is not the dismissal but the reason.
+///
+/// It fails closed in both directions, so the register describes the tree
+/// rather than its own history: a suppression with no record is a finding
+/// turned off with the reason nowhere, and a record no suppression names is a
+/// reason for something that is no longer there.
+///
+/// The subject is tracked files under `crates/` and `.github/`. The records
+/// themselves are not read, because a record is about a spelling and carries
+/// it, and a search there would refuse the records. The residual is that a
+/// suppression written into a document is invisible here.
+fn every_accepted_finding_is_recorded(root: &Path) -> Judged {
+    let tracked = match tracked(root) {
+        Ok(tracked) => tracked,
+        Err(why) => return Judged::CouldNotJudge(why),
+    };
+
+    let records: Vec<&str> = tracked
+        .iter()
+        .filter(|name| name.starts_with(ACCEPTED) && is_a_record(name))
+        .map(String::as_str)
+        .collect();
+
+    let mut unrecorded = Vec::new();
+    let mut named = Vec::new();
+    let mut read = 0_usize;
+
+    for name in tracked
+        .iter()
+        .filter(|name| is_searched_for_a_finding(name))
+    {
+        let Ok(text) = std::fs::read_to_string(root.join(name)) else {
+            continue;
+        };
+        read += 1;
+        for (line, spelling, said) in suppressions(&text) {
+            if let Some(record) = record_named(said, &records) {
+                named.push(record);
+            } else {
+                unrecorded.push(format!(
+                    "  {name}:{line}  {spelling}\n      names no record under {ACCEPTED}"
+                ));
+            }
+        }
+    }
+
+    let dangling: Vec<&str> = records
+        .iter()
+        .copied()
+        .filter(|record| !named.contains(record))
+        .collect();
+
+    if !unrecorded.is_empty() || !dangling.is_empty() {
+        let mut why = String::new();
+        if !unrecorded.is_empty() {
+            let _ = writeln!(
+                why,
+                "{} finding(s) turned off with the reason nowhere:\n",
+                unrecorded.len()
+            );
+            for one in &unrecorded {
+                let _ = writeln!(why, "{one}");
+            }
+        }
+        for record in &dangling {
+            let _ = writeln!(
+                why,
+                "{record} accepts a finding that nothing suppresses any more."
+            );
+        }
+        let _ = writeln!(
+            why,
+            "\nA suppression names its record on the same line, and {ACCEPTED}README.md \
+             is\nwhere the shape of one is written. Lowering a lint for the whole tree is \
+             a\nchange to the workspace manifest instead, argued there."
+        );
+        return Judged::Refused(why);
+    }
+
+    Judged::Nothing(Some(format!(
+        "{read} file(s) searched, {} suppression(s), {} record(s)",
+        named.len(),
+        records.len()
+    )))
+}
+
+/// Whether a tracked path is read for a suppression.
+fn is_searched_for_a_finding(name: &str) -> bool {
+    name.starts_with("crates/") || name.starts_with(".github/")
+}
+
+/// Every suppression in `text`, with its line, the spelling that named it and
+/// the whole of the line it is on.
+fn suppressions(text: &str) -> Vec<(usize, &'static str, &str)> {
+    let mut found = Vec::new();
+    for (index, line) in text.lines().enumerate() {
+        if let Some(spelling) = SUPPRESSIONS
+            .iter()
+            .find(|spelling| line.contains(**spelling))
+        {
+            found.push((index + 1, *spelling, line));
+        }
+    }
+    found
+}
+
+/// The record a suppression line names, where it names one that is in the tree.
+///
+/// The whole path is named rather than an identifier, so that the line a person
+/// reads next to the suppression is the line they can open.
+fn record_named<'a>(said: &str, records: &[&'a str]) -> Option<&'a str> {
+    records.iter().copied().find(|record| said.contains(record))
 }
 
 /// Whether the check treats a file as binary and does not judge it.
@@ -1299,6 +1567,120 @@ body
         assert_eq!(breaks(camel, &all).len(), 1, "a casing walks through");
         let inside = concat!("    self.assumed_", "temperature_kelvin = 293.15;");
         assert_eq!(breaks(inside, &all).len(), 1, "a longer name walks through");
+    }
+
+    // The refusal surface. A fixture here is a whole file rather than a line,
+    // because what the check compares is a file's module documentation against
+    // its own code, and a line on its own carries neither half.
+
+    fn a_file(module_docs: &str, body: &str) -> String {
+        format!("{module_docs}\n\nfn judge() {{\n    {body}\n}}\n#[cfg(test)]\nmod tests {{}}\n")
+    }
+
+    #[test]
+    fn a_file_that_decides_a_refusal_and_says_so_is_in_the_surface() {
+        let source = a_file(
+            &format!("//! A check.\n//!\n//! {SURFACE}"),
+            "return Judged::Refused(why);",
+        );
+        assert_eq!(names_itself(&source), (true, true));
+    }
+
+    #[test]
+    fn a_file_that_decides_a_refusal_without_saying_so_is_refused() {
+        let source = a_file("//! A check.", "return Judged::Refused(why);");
+        assert_eq!(names_itself(&source), (false, true));
+    }
+
+    #[test]
+    fn a_file_that_says_so_and_decides_nothing_is_refused() {
+        let source = a_file(&format!("//! A crate.\n//! {SURFACE}"), "let a = 1;");
+        assert_eq!(names_itself(&source), (true, false));
+    }
+
+    #[test]
+    fn a_comment_about_a_refusal_does_not_put_a_file_in_the_surface() {
+        // The near neighbour, and the one that decides whether this check can
+        // be lived with. A file that argues about refusals in prose, which
+        // several here do, must not join the surface for using the words.
+        let source = a_file("//! A crate.", "// what would be Judged::Refused elsewhere");
+        assert_eq!(names_itself(&source), (false, false));
+    }
+
+    #[test]
+    fn a_refusal_in_the_suite_is_not_the_surface() {
+        // A fixture is a refusal written down to be read. Reading the suite
+        // would put every file holding one into the surface, and the surface
+        // would then be mostly suite.
+        let source = "//! A crate.\n#[cfg(test)]\nmod tests {\n    Judged::Refused(why);\n}\n";
+        assert_eq!(names_itself(source), (false, false));
+    }
+
+    #[test]
+    fn this_tree_names_a_surface_and_it_is_not_empty() {
+        // Every fixture above passes over a tree whose surface is empty, and
+        // an empty surface names nothing for a coverage bar or a mutation run
+        // to be pointed at. This is the leg that says the check found some.
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join("..");
+        let judged = the_refusal_surface_is_named(&root);
+        let Judged::Nothing(Some(note)) = judged else {
+            panic!("{judged:?}");
+        };
+        assert!(note.contains("in the refusal surface: "), "{note}");
+    }
+
+    // A finding accepted rather than fixed. Every suppression below is
+    // assembled from two halves, because this module sits under a subject the
+    // check reads and a spelling written whole would be a suppression naming
+    // no record, inside the fixtures for the check that refuses one.
+
+    #[test]
+    fn a_suppression_naming_a_record_that_is_in_the_tree_passes() {
+        let records = ["docs/accepted-findings/a-lint-that-is-wrong-here.md"];
+        let said = concat!(
+            "#[all",
+            "ow(clippy::x)] // docs/accepted-findings/a-lint-that-is-wrong-here.md"
+        );
+        let found = suppressions(said);
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert_eq!(record_named(found[0].2, &records), Some(records[0]));
+    }
+
+    #[test]
+    fn a_suppression_naming_no_record_is_refused() {
+        let said = concat!("#[all", "ow(clippy::x)]");
+        let found = suppressions(said);
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert_eq!(
+            record_named(
+                found[0].2,
+                &["docs/accepted-findings/a-lint-that-is-wrong-here.md"]
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn an_ordinary_attribute_is_not_a_suppression() {
+        // The near neighbour. Attributes are most of what a Rust file carries,
+        // and a check reading all of them as suppressions would refuse the
+        // tree on the day it landed.
+        for ordinary in ["#[derive(Debug)]", "#[must_use]", "#[test]", "#[cfg(test)]"] {
+            assert!(suppressions(ordinary).is_empty(), "{ordinary}");
+        }
+    }
+
+    #[test]
+    fn the_workflow_auditor_is_silenced_by_a_comment_and_that_counts_too() {
+        // The other tool this tree runs is silenced in a workflow file rather
+        // than by an attribute, so the spelling is not a Rust one and the
+        // subject is not only Rust files.
+        let said = concat!("      # zizmor:", " ignore[unpinned-uses]");
+        assert_eq!(suppressions(said).len(), 1);
+        assert!(is_searched_for_a_finding(".github/workflows/gate.yml"));
+        assert!(!is_searched_for_a_finding(
+            "docs/accepted-findings/README.md"
+        ));
     }
 
     #[test]
