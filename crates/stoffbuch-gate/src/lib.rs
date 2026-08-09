@@ -1621,12 +1621,25 @@ body
         // Every fixture above passes over a tree whose surface is empty, and
         // an empty surface names nothing for a coverage bar or a mutation run
         // to be pointed at. This is the leg that says the check found some.
-        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join("..");
-        let judged = the_refusal_surface_is_named(&root);
-        let Judged::Nothing(Some(note)) = judged else {
-            panic!("{judged:?}");
-        };
-        assert!(note.contains("in the refusal surface: "), "{note}");
+        //
+        // The sources are walked rather than asked of git. The check itself
+        // asks git, because what is tracked is git's answer, but a test that
+        // asked would fail in any copy of this tree that is not a checkout,
+        // and a mutation run works in exactly such a copy.
+        let crates = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+        let mut named = 0_usize;
+        for entry in std::fs::read_dir(&crates).expect("the crates directory is in this tree") {
+            let source = entry.expect("a readable entry").path().join("src");
+            for file in ["lib.rs", "main.rs"] {
+                let Ok(text) = std::fs::read_to_string(source.join(file)) else {
+                    continue;
+                };
+                if names_itself(&text) == (true, true) {
+                    named += 1;
+                }
+            }
+        }
+        assert!(named > 0, "nothing in this tree names itself as surface");
     }
 
     // A finding accepted rather than fixed. Every suppression below is
