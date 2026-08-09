@@ -12,14 +12,23 @@ project, and the target is read as a command rather than remembered:
 Both read on 2026-08-08. Thirteen names, and a later reader can run the same two
 commands to see whether the target has moved.
 
-Here, on the same day, nothing is required at all:
+Here, on the same day, nothing was required at all:
 
     gh api repos/iderex/stoffbuch/rulesets/20523097 --jq '[.rules[].type]'
     ["deletion","non_fast_forward","pull_request"]
 
-The gap between those two outputs is what this milestone closes, and requiring
-names is the last issue of it rather than the first, because a name is only worth
-requiring once the check behind it is worth passing.
+Four names have been added since, read on 2026-08-09:
+
+    gh api repos/iderex/stoffbuch/rulesets/20523097 \
+      --jq '[.rules[] | select(.type=="required_status_checks") | .parameters.required_status_checks[].context]'
+    ["DCO sign-off","dependency-review","Reject Trojan Source Unicode","Audit workflows (zizmor)"]
+
+Both readings are kept, because the first is what the walk below was written
+against and the second is what a reader today would get.
+
+The gap between the target and this list is what this milestone closes, and
+requiring names is the last issue of it rather than the first, because a name is
+only worth requiring once the check behind it is worth passing.
 
 This document holds the names from the target board and the outcome for each. It
 is also the one place a name is allowed to be restated, so that a rename shows as
@@ -155,10 +164,16 @@ the guards already in this tree are brought into one procedure.
 ## What this document does not hold
 
 It does not list this repository's own checks. What runs here is printed by the
-gate command, and that command does not exist yet: issue #15 builds it, and until
-it does there is nothing to point a reader at that would print anything. That is
-the one condition of issue #68 this document cannot meet, and it is recorded here
-rather than left for a reader to notice.
+gate command:
+
+    cargo run --quiet --locked -p stoffbuch-cli -- gate
+
+Run it and read what it says. A list written here would be a second home for a
+set that grows, and the second home is the one that goes stale, which is the
+whole defect this document was written against for the thirteen names above.
+Those thirteen are restated on purpose, because they belong to a board this
+repository does not control and a rename there has to show as a change to this
+file. This repository's own set is not in that position: it is a command away.
 
 It does not change the protection rule. Requiring these names is issue #75, and
 it comes last on purpose, because a required name that no job produces blocks
