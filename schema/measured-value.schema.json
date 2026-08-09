@@ -1,0 +1,721 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:stoffbuch:schema:measured-value:1",
+  "title": "measured value row",
+  "description": "A measured value row asserts that a named publication reported this number, for this material, under these conditions, obtained by this method. It asserts nothing about whether the number is correct. What each kind of row may and may not assert is settled in docs/decisions/record-kinds.md.\n\nThis file is the specification. There is no second document describing these fields in prose, because two homes for one fact drift and the prose is always the one that drifts. Anything a reader needs that the shape cannot carry, including why a field exists, is in the description beside the field.\n\nThe version of this schema is the last segment of its $id, and it is 1. It changes when a row that was valid under the old version stops being valid under the new one, or when a row that was invalid starts being valid. That covers a field added as required, a field removed, a vocabulary narrowed and a pattern tightened. It does not change when a description is rewritten, because a description constrains nothing. A new version is a new file beside this one under a new $id, because rows written against version 1 stay in the register and stay readable, and a version that edits this file in place would leave them validated against something they were never written for.\n\nA row that passes this schema is a well formed row and not a valid one. JSON Schema can refuse a shape, a type, a pattern and a required field. It cannot refuse a unit outside the quantity's accepted set, a unit whose dimension is wrong, a condition the quantity requires and the row omits, a normalised uncertainty of zero, a chain link naming a source that is not in the source register, a supersession pointing at anything other than the version below, or a composition whose fractions do not sum to one. Every one of those is a check in the gate, and the gate is not this file. The split is decided in docs/decisions/means-format-and-language.md.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "conditions",
+    "id",
+    "kind",
+    "material",
+    "provenance",
+    "quantity",
+    "uncertainty",
+    "value",
+    "version"
+  ],
+  "properties": {
+    "kind": {
+      "description": "Which of the three row kinds this file is. It is written in the file rather than inferred from where the file sits, so a row read on its own says what it is, and so a row carrying the contents of one kind under the name of another is refused rather than half read.",
+      "const": "measured-value"
+    },
+    "id": {
+      "description": "The row identifier. Opaque, minted once, never changed, never reused and never derived from anything about the row, so that nothing the register later learns about this sample can make the identifier wrong.",
+      "$ref": "#/$defs/row-identifier"
+    },
+    "version": {
+      "description": "The version of this row, starting at one and incremented by one for each released correction. A higher number is later and supersedes what is below it.",
+      "type": "integer",
+      "minimum": 1
+    },
+    "supersedes": {
+      "description": "The row and version this one replaces, written in the citation form. Not required, and refused outright, at version one, because a first version replaces nothing. Required above version one. That the identifier here is this row's own, and that the version is the one immediately below, are comparisons between two fields and are refused by the gate rather than here.",
+      "$ref": "#/$defs/row-citation"
+    },
+    "correction": {
+      "description": "Why this version exists. Not required, and refused outright, at version one, because a first version corrects nothing. Required above version one.",
+      "$ref": "#/$defs/correction"
+    },
+    "withdrawal": {
+      "description": "Present only on a version that withdraws the row. Not required, because almost no row is withdrawn, and a row that carries nothing here is an ordinary live row. Nothing is ever deleted: a row that should never have existed gains a final version carrying this block, so an old citation still resolves and what it resolves to says what happened.",
+      "$ref": "#/$defs/withdrawal"
+    },
+    "material": {
+      "description": "What the sample was. This is the join key of the register.",
+      "$ref": "#/$defs/material"
+    },
+    "quantity": {
+      "description": "The identifier of the quantity this row reports, as declared in the quantity register. The form of a quantity identifier is fixed with the quantity register rather than here, so this constrains only that a row names one and that the name is not empty. Whether the named quantity exists is a comparison against another file and is refused by the gate.",
+      "type": "string",
+      "minLength": 1
+    },
+    "value": {
+      "description": "The number the publication printed, in the unit the publication printed it in. Nothing converts it on the way in: an arithmetic step between the publication and the file is performed once by a person and is invisible afterwards, and a transposed exponent there survives every later review because the review compares the file against the file.",
+      "$ref": "#/$defs/quantity-value"
+    },
+    "conditions": {
+      "description": "What the sample was under when the number was measured.",
+      "$ref": "#/$defs/conditions"
+    },
+    "uncertainty": {
+      "description": "What the publication said about how well the number is known, what that reads as in the quantity's own unit, and which reading produced the second from the first.",
+      "$ref": "#/$defs/uncertainty"
+    },
+    "provenance": {
+      "description": "Where the number came from and how it got here.",
+      "$ref": "#/$defs/provenance"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "version": {
+            "const": 1
+          }
+        },
+        "required": [
+          "version"
+        ]
+      },
+      "then": {
+        "allOf": [
+          {
+            "not": {
+              "required": [
+                "supersedes"
+              ]
+            }
+          },
+          {
+            "not": {
+              "required": [
+                "correction"
+              ]
+            }
+          }
+        ]
+      },
+      "else": {
+        "required": [
+          "correction",
+          "supersedes"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "correction": {
+            "properties": {
+              "cause": {
+                "const": "duplicate"
+              }
+            },
+            "required": [
+              "cause"
+            ]
+          }
+        },
+        "required": [
+          "correction",
+          "withdrawal"
+        ]
+      },
+      "then": {
+        "properties": {
+          "withdrawal": {
+            "required": [
+              "survivor"
+            ]
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "row-identifier": {
+      "description": "The string sb- followed by ten characters of Crockford's base32 alphabet, which leaves out the four letters that are read or copied as digits.",
+      "type": "string",
+      "pattern": "^sb-[0-9A-HJKMNP-TV-Z]{10}$"
+    },
+    "row-citation": {
+      "description": "A row identifier and a version with an at sign between them, which is the form a citation of one row is written in.",
+      "type": "string",
+      "pattern": "^sb-[0-9A-HJKMNP-TV-Z]{10}@[1-9][0-9]*$"
+    },
+    "decimal-digits": {
+      "description": "A number held as the digits the publication printed. It is a string rather than a JSON number because an ordinary JSON parser turns 1.1200 into a double before a consumer sees it, and 1.1200 and 1.12 are different claims about the fourth figure. A library reads this into a decimal.",
+      "type": "string",
+      "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]+)?([eE][+-]?[0-9]+)?$"
+    },
+    "positive-decimal-digits": {
+      "description": "The same as decimal-digits with every spelling of zero and every negative number left out. It is used where zero is never a true statement: no measurement has an uncertainty of zero, and a zero in such a field is always either a substitution for an absent one or a transcription error.",
+      "type": "string",
+      "pattern": "^(0\\.[0-9]*[1-9][0-9]*|[1-9][0-9]*(\\.[0-9]+)?)([eE][+-]?[0-9]+)?$"
+    },
+    "unit": {
+      "description": "A unit as a UCUM code, which is case sensitive and has a published grammar, so a millisievert cannot be read as a megasievert and a compound unit needs no dialect of this project's own. The pattern here is the part of that grammar a pattern can hold: a UCUM code is printable ASCII with no space in it, so the words a paper prints are refused and the code is not. Whether the code parses, and whether it is in the quantity's accepted set, are read by the gate rather than here.",
+      "type": "string",
+      "pattern": "^[!-~]+$"
+    },
+    "quantity-value": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "digits",
+        "unit"
+      ],
+      "properties": {
+        "digits": {
+          "$ref": "#/$defs/decimal-digits"
+        },
+        "unit": {
+          "$ref": "#/$defs/unit"
+        }
+      }
+    },
+    "not-stated": {
+      "description": "The publication did not say. This is a value a curator writes rather than an empty field, because a great many of the field's most used tables carry no temperature at all, and a register that could not record that fact would either exclude those values or invent one. There is no spelling here for a condition that does not apply to the quantity: that follows from the quantity declaration, and a row that could write it could silence the check that asks for it.",
+      "const": "not-stated"
+    },
+    "correction": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "cause",
+        "note"
+      ],
+      "properties": {
+        "cause": {
+          "description": "The category the correction falls in, which is what a report counts.",
+          "enum": [
+            "duplicate",
+            "identity-correction",
+            "better-reading-of-an-equation",
+            "misread-source",
+            "source-retracted-or-corrected",
+            "transcription-error"
+          ]
+        },
+        "note": {
+          "description": "A sentence a person wrote. It is required even where the cause seems to say everything, because a cause is a category and the reader wants to know which digit moved.",
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "withdrawal": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "reason"
+      ],
+      "properties": {
+        "reason": {
+          "description": "What happened, in a sentence, so that a citation resolving to this version resolves to something that explains itself.",
+          "type": "string",
+          "minLength": 1
+        },
+        "survivor": {
+          "description": "The row this one duplicated. Not required in general, because most withdrawals are not duplications and there is nothing to point at. Required where the correction cause is duplicate, because a duplicate withdrawn without naming what it duplicated leaves a reader with a dead citation and no way on.",
+          "$ref": "#/$defs/row-identifier"
+        }
+      }
+    },
+    "material": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "composition",
+        "crystalline-state",
+        "phase",
+        "preparation"
+      ],
+      "properties": {
+        "composition": {
+          "description": "What the material is made of, as constituents on named sublattices rather than as a formula string, because a formula string is a small language this project would then own and would have to parse the same way twice.",
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/constituent"
+          }
+        },
+        "phase": {
+          "description": "The structural arrangement the field names: a polytype where the material has them, a crystal structure where it does not, or amorphous where there is no long range order to name. This is what separates the several materials the field calls silicon carbide. The vocabulary grows with the materials and is data in the register rather than a list here, so this constrains only that a row names a phase.",
+          "type": "string",
+          "minLength": 1
+        },
+        "crystalline-state": {
+          "description": "Not the same question as the phase. Collapsing the two loses the case that matters most in practice, a polycrystalline film of a material whose phase is perfectly well named.",
+          "enum": [
+            "amorphous",
+            "polycrystalline",
+            "single-crystal"
+          ]
+        },
+        "preparation": {
+          "description": "What the publication said about how the sample was made: the growth or deposition method, the temperatures, the precursors, the anneal, the substrate, whatever was printed. It is free text, it is searchable and quotable, and no equality rule reads it, because two papers describing one deposition write it differently and an identity that included this would make every film unique and every comparable set a set of one. It is required, and the publication that describes no preparation is written as not-stated, so that a sample nobody described and a field nobody filled in are not the same thing in the file.",
+          "oneOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "$ref": "#/$defs/not-stated"
+            }
+          ]
+        }
+      }
+    },
+    "constituent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "basis",
+        "element",
+        "fraction",
+        "sublattice"
+      ],
+      "properties": {
+        "element": {
+          "description": "The chemical symbol. Elements are matched exactly and never under a tolerance: a material containing aluminium and one containing indium are never the same identity, however close the fractions.",
+          "type": "string",
+          "pattern": "^[A-Z][a-z]{0,2}$"
+        },
+        "sublattice": {
+          "description": "The sublattice this constituent sits on. It is required on every constituent, including a material with one, so that an alloy fraction can never be written against a composition that declares no sublattice for it. That the fractions on one sublattice sum to one is a comparison across the array and is refused by the gate.",
+          "type": "string",
+          "minLength": 1
+        },
+        "fraction": {
+          "description": "The mole fraction on that sublattice, as digits, so that a fraction printed as 0.300 keeps the claim its trailing zeros make. This is the one continuous number inside an identity, and it is matched under a tolerance the quantity declares rather than exactly, because no two publications grow a sample to the same fraction to the last digit.",
+          "type": "string",
+          "pattern": "^(0(\\.[0-9]+)?|1(\\.0+)?)$"
+        },
+        "basis": {
+          "description": "Whether the fraction is what the growth was asked for or what somebody determined on the sample. It is not part of equality, so a nominal 0.30 and a measured 0.30 are the same identity. It is recorded because a comparison resting on nominal fractions is weaker than one resting on measured ones, and a reader who is told which is which can act on it.",
+          "enum": [
+            "measured",
+            "nominal"
+          ]
+        },
+        "fraction-uncertainty": {
+          "description": "The uncertainty the publication gave on the fraction, in the same units as the fraction, which is to say none. Not required, because most publications give none, and a required field here would be filled in with a guess. It does not belong to the identity, which is a key, and a key with an interval on it is not a key; it is read by the comparability tolerance so that a composition known to a tenth and one known to a hundredth are not treated as equally precise.",
+          "$ref": "#/$defs/positive-decimal-digits"
+        }
+      }
+    },
+    "conditions": {
+      "description": "The condition block. Every key is optional here and none of them is optional in the register: which conditions a row must carry is declared by its quantity, and a schema cannot read another file. A key outside this vocabulary is refused, because adding a term to it is a decision and not something a row does by writing an unfamiliar name. Every slot is either a stated value or not-stated, and nothing anywhere supplies a default for an absent one.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "temperature": {
+          "description": "The sample temperature, which is not the ambient temperature and not the carrier temperature. Not required here, because which conditions a row must carry is declared by its quantity and a schema cannot read another file.",
+          "oneOf": [
+            {
+              "$ref": "#/$defs/quantity-value"
+            },
+            {
+              "$ref": "#/$defs/not-stated"
+            }
+          ]
+        },
+        "pressure": {
+          "description": "Not required here, because which conditions a row must carry is declared by its quantity and a schema cannot read another file.",
+          "oneOf": [
+            {
+              "$ref": "#/$defs/quantity-value"
+            },
+            {
+              "$ref": "#/$defs/not-stated"
+            }
+          ]
+        },
+        "doping": {
+          "description": "A species, a concentration, and whether the concentration is what the process asked for or what somebody determined on the sample, because a nominal doping and a measured one are different facts. No spelling here says that a sample was deliberately undoped: no decision record gives one, and inventing a vocabulary term is the one thing a row may not do. Not required here, because which conditions a row must carry is declared by its quantity and a schema cannot read another file.",
+          "oneOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "basis",
+                "concentration",
+                "species"
+              ],
+              "properties": {
+                "species": {
+                  "type": "string",
+                  "pattern": "^[A-Z][a-z]{0,2}$"
+                },
+                "concentration": {
+                  "$ref": "#/$defs/quantity-value"
+                },
+                "basis": {
+                  "enum": [
+                    "measured",
+                    "nominal"
+                  ]
+                }
+              }
+            },
+            {
+              "$ref": "#/$defs/not-stated"
+            }
+          ]
+        },
+        "illumination": {
+          "description": "The dark case is written rather than left to silence, because a measurement made in the dark and a measurement whose illumination nobody recorded are different facts and only one of them is about the publication. Not required here, because which conditions a row must carry is declared by its quantity and a schema cannot read another file.",
+          "oneOf": [
+            {
+              "const": "dark"
+            },
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "$ref": "#/$defs/not-stated"
+            }
+          ]
+        },
+        "spectral-variable": {
+          "description": "Where the quantity has one. It is stored as printed like any other value, so a row that gave a wavelength is not silently turned into one that gave a photon energy. Not required here, because which conditions a row must carry is declared by its quantity and a schema cannot read another file.",
+          "oneOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "digits",
+                "kind",
+                "unit"
+              ],
+              "properties": {
+                "kind": {
+                  "enum": [
+                    "frequency",
+                    "photon-energy",
+                    "wavelength",
+                    "wavenumber"
+                  ]
+                },
+                "digits": {
+                  "$ref": "#/$defs/decimal-digits"
+                },
+                "unit": {
+                  "$ref": "#/$defs/unit"
+                }
+              }
+            },
+            {
+              "$ref": "#/$defs/not-stated"
+            }
+          ]
+        },
+        "orientation": {
+          "description": "A crystallographic direction, required by every quantity that declares itself anisotropic. It is a condition rather than a part of the identity, because it is a property of the direction a measurement was taken in rather than of the material in the sample holder, and a register in which a wafer becomes three materials depending on which way the light went through it has lost the join it needs. The notation is fixed with the quantity register rather than here. Not required here, because which conditions a row must carry is declared by its quantity and a schema cannot read another file.",
+          "oneOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "$ref": "#/$defs/not-stated"
+            }
+          ]
+        }
+      }
+    },
+    "uncertainty": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "interpretation",
+        "printed"
+      ],
+      "properties": {
+        "printed": {
+          "description": "The statement exactly as the publication gave it, held as digits and a shape rather than as a sentence, so that a stated 0.020 keeps the claim its trailing zero makes.",
+          "oneOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "digits",
+                "shape"
+              ],
+              "properties": {
+                "shape": {
+                  "const": "symmetric"
+                },
+                "digits": {
+                  "$ref": "#/$defs/positive-decimal-digits"
+                },
+                "unit": {
+                  "description": "Not required, because a publication printing a plus or minus after a value very often gives no unit for it and means the unit of the value. Written where the publication wrote one.",
+                  "$ref": "#/$defs/unit"
+                }
+              }
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "down",
+                "shape",
+                "up"
+              ],
+              "properties": {
+                "shape": {
+                  "const": "asymmetric"
+                },
+                "up": {
+                  "$ref": "#/$defs/positive-decimal-digits"
+                },
+                "down": {
+                  "$ref": "#/$defs/positive-decimal-digits"
+                },
+                "unit": {
+                  "description": "Not required, for the same reason as on a symmetric statement.",
+                  "$ref": "#/$defs/unit"
+                }
+              }
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "percent",
+                "shape"
+              ],
+              "properties": {
+                "shape": {
+                  "const": "relative"
+                },
+                "percent": {
+                  "description": "A percentage of the value, as printed. It produces an interval from the value, and an interpretation rule then turns that interval into a standard uncertainty, which is why a relative statement never carries a single interpretation tag.",
+                  "$ref": "#/$defs/positive-decimal-digits"
+                }
+              }
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "shape"
+              ],
+              "properties": {
+                "shape": {
+                  "description": "The publication stated nothing. This is a statement rather than an empty block: a value with no uncertainty statement has no uncertainty here, and it does not have an uncertainty of zero.",
+                  "const": "none"
+                }
+              }
+            }
+          ]
+        },
+        "interpretation": {
+          "description": "How the normalised value was produced from the printed statement, as tags from a closed vocabulary. It is what makes the reading auditable, reversible in bulk when it turns out to be wrong, and countable, so a report can say how many rows in a comparison rest on this project's reading rather than on the field's statement. percent-of-value and digitised-bar are never alone: each produces an interval and a second tag says what the interval was read as, which is why this is a list of one or two rather than a single tag.",
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 2,
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "as-stated-standard",
+              "assumed-standard",
+              "digitised-bar",
+              "half-width-rectangular",
+              "last-digit",
+              "none",
+              "percent-of-value",
+              "stated-coverage-factor"
+            ]
+          }
+        },
+        "normalised": {
+          "description": "One standard uncertainty in the quantity's own unit, which is what anything computing over the register reads. Not required, because the rule none produces no number and a printed statement this register cannot read produces no number either, and forcing one out of an unclear statement is exactly the invention the register exists to remove. A row whose printed statement is present and whose normalised value is absent is a complete row, and the interpretation tag is what says so.",
+          "oneOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "digits",
+                "unit"
+              ],
+              "properties": {
+                "digits": {
+                  "$ref": "#/$defs/positive-decimal-digits"
+                },
+                "unit": {
+                  "$ref": "#/$defs/unit"
+                }
+              }
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "down",
+                "unit",
+                "up"
+              ],
+              "properties": {
+                "up": {
+                  "$ref": "#/$defs/positive-decimal-digits"
+                },
+                "down": {
+                  "$ref": "#/$defs/positive-decimal-digits"
+                },
+                "unit": {
+                  "$ref": "#/$defs/unit"
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "chain",
+        "extraction",
+        "locator"
+      ],
+      "properties": {
+        "extraction": {
+          "description": "How the number got from the source into the register. Each entry owes something different, and the ones that owe a further field are refused without it below. A number the curator computed from other quantities the same publication printed is not here: it is a derived row, because putting it here would let a number this project computed enter the register as though a publication had printed it.",
+          "enum": [
+            "copied-from-compilation",
+            "digitised",
+            "transcribed"
+          ]
+        },
+        "locator": {
+          "description": "Where inside the source the number is, which is the part existing collections leave out and without which a citation names a paper and leaves the reader to find the number. It belongs to the row rather than to the source, because two rows cite one paper at different tables. The locator syntax is a vocabulary fixed with the source register rather than here, so this constrains only that a row carries one, and a locator that does not parse is refused by the gate.",
+          "type": "string",
+          "minLength": 1
+        },
+        "chain": {
+          "description": "The whole chain the curator knows about, ordered from where the curator got the value back to the earliest source they could identify. A row with a single source is a chain of length one rather than a special shape.",
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/chain-link"
+          },
+          "contains": {
+            "type": "object",
+            "required": [
+              "read"
+            ],
+            "properties": {
+              "read": {
+                "const": true
+              }
+            }
+          },
+          "minContains": 1,
+          "maxContains": 1
+        },
+        "digitisation": {
+          "description": "What a value read off a published figure owes. Not required in general, because a transcribed value owes none of it. Required where the extraction is digitised, and refused as absent there, because a point read off a printed axis carries an error the publication's own uncertainty says nothing about. What else a digitised row owes, including the axis scales as read, is being decided where digitised figure points are.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "method",
+            "uncertainty"
+          ],
+          "properties": {
+            "method": {
+              "description": "How the point was read, because a point read by eye off a scanned page and a point extracted by software from a vector figure are not the same claim.",
+              "type": "string",
+              "minLength": 1
+            },
+            "uncertainty": {
+              "description": "What the digitising itself could be wrong by, in the quantity's own unit. It is combined with the publication's own rather than replacing it, and it is never zero.",
+              "$ref": "#/$defs/quantity-value"
+            }
+          }
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "extraction": {
+                "const": "digitised"
+              }
+            },
+            "required": [
+              "extraction"
+            ]
+          },
+          "then": {
+            "required": [
+              "digitisation"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "extraction": {
+                "const": "copied-from-compilation"
+              }
+            },
+            "required": [
+              "extraction"
+            ]
+          },
+          "then": {
+            "properties": {
+              "chain": {
+                "minItems": 2,
+                "prefixItems": [
+                  {
+                    "properties": {
+                      "read": {
+                        "const": true
+                      }
+                    },
+                    "required": [
+                      "read"
+                    ]
+                  }
+                ]
+              }
+            }
+          }
+        }
+      ]
+    },
+    "chain-link": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "read",
+        "source"
+      ],
+      "properties": {
+        "source": {
+          "description": "The identifier of a source in the source register. Sources live once, in their own tree, and rows point at them, so a citation cannot drift between two rows that mean the same paper. The identifier form is fixed with the source register rather than here.",
+          "type": "string",
+          "minLength": 1
+        },
+        "read": {
+          "description": "Whether the curator read this link. Exactly one link in a chain carries true, and it is written on every link rather than only on that one, so that a chain saying nothing about a link and a chain saying the curator did not read it are the same statement. A curator who read a handbook and copied its citation of a 1974 paper has not read the 1974 paper.",
+          "type": "boolean"
+        },
+        "terminates": {
+          "description": "Why the chain ends here, where the curator established that this source gives no citation of its own. Not required, because a last link with no reason is the ordinary state of a chain nobody has finished walking, and that is an open piece of work rather than a defect. An empty field would collapse the two and would read as the finished case while meaning the unfinished one.",
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    }
+  }
+}
