@@ -34,15 +34,30 @@ So it is not the enforcement and this document does not call it one.
 
 ## What runs the gate on the server
 
-Nothing. The workflows in this repository check other things and none of them
-builds or tests anything:
+`.github/workflows/gate.yml`, on every pull request and on every push to the
+default branch. It runs the command at the top of this document and nothing
+else, so what the server judged and what you judged are the same thing rather
+than two lists that agree until one of them is edited.
 
-    grep -rlE '\bcargo\b' .github/workflows/ ; echo "exit=$?"
-    exit=1
+The check it produces is called
 
-So a run of the gate that never happened leaves the same trace as a green one,
-and the only thing standing behind a merge today is that somebody ran the
-command and said so. Making the gate a check a protection rule can require is
-[#16](https://github.com/iderex/stoffbuch/issues/16) and
-[#75](https://github.com/iderex/stoffbuch/issues/75); until they land, the
-sentence above is the whole of it.
+    The gate
+
+and this is the only document that writes that name down. A protection rule can
+only name a check as a literal string, so the name is an interface: rename the
+job and every rule pointing at the old name is pointing at a check nothing
+produces, which is a rule that passes everything. Writing it here makes a rename
+a change to two files a reviewer sees rather than one line inside a workflow.
+
+The rule on the default branch does not require it:
+
+    gh api repos/iderex/stoffbuch/rulesets/20523097 \
+      --jq '[.rules[] | select(.type=="required_status_checks") | .parameters.required_status_checks[].context]'
+    ["DCO sign-off","dependency-review","Reject Trojan Source Unicode","Audit workflows (zizmor)"]
+
+read on 2026-08-09. Four names are conditions of a merge and this is not one of
+them, so the check runs, it goes red where the gate refuses, and a merge is
+still possible over the top of it. Adding the name to that list is
+[#75](https://github.com/iderex/stoffbuch/issues/75), and it comes after the
+check exists on purpose, because a required name that no job produces blocks
+every merge with no repair except changing the rule back.

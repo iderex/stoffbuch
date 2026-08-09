@@ -106,11 +106,13 @@ are already Done-when conditions on other issues with nothing behind them. Issue
 #91 holds it, opened by this walk.
 
 The gate part is named `invariants`. That is the name a refusal prints and the
-name this document is holding stable, and it is not yet a name a protection rule
-can require: a rule requires the context of a check that runs on the server, and
-no workflow here runs the gate. #16 is what creates one, and the name it gives
-that leg is what a rule would name. Which invariants the part holds is printed by
-the run and is not restated here.
+name this document is holding stable, and it is not a name a protection rule can
+require. A rule names a check run, and a check run here is a job. The whole gate
+runs as one job, so what a rule can name is that job and not the leg inside it,
+and a rule that required this part by itself would be naming a string nothing
+produces. The job's name is in
+[the-gate.md](the-gate.md), which is where it is held stable. Which invariants
+the part holds is printed by the run and is not restated here.
 
 ### Reject Trojan Source Unicode
 
