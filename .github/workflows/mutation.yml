@@ -1,0 +1,116 @@
+# Mutation testing over the surface that decides refusals.
+#
+# The suite says the tests pass. This asks the harder question: if the code were
+# subtly wrong, would anything notice. Each mutant is a small change to the
+# gate's own code, and a mutant that survives the suite is a change nothing here
+# would have caught.
+#
+# It is not on the pull-request path because a run takes tens of minutes over a
+# gate that finishes in well under a minute, and that is a cost per change
+# nobody carries for long.
+#
+# The scope is not written here. It is asked for, from the same marker the gate
+# part named `surface` reads, so the run and the check cannot disagree about
+# what the surface is. A list in this file would be a second home for a set that
+# moves whenever a file starts or stops deciding refusals, and the run pointed
+# at the stale copy would report a clean score over code it never touched.
+#
+# What the threshold is, and the run it was set from, are in
+# docs/mutation-testing.md.
+name: mutation
+
+on:
+  # Weekly. The surface changes when a check is added, which is a matter of
+  # days here rather than hours, and a run that costs tens of minutes is not
+  # worth spending on a tree nobody has touched.
+  schedule:
+    - cron: "41 2 * * 3"
+  # So the run can be asked for on the day a check lands, rather than waited
+  # for.
+  workflow_dispatch:
+
+# Read-only. The run compiles the tree, mutates a copy of it and runs the suite
+# over the copy. It writes nothing back.
+permissions:
+  contents: read
+
+# A superseded run is not cancelled. Two schedules never overlap, and a manual
+# run asked for while one is in flight is a run somebody wants the answer to.
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+jobs:
+  mutants:
+    name: Mutation testing
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The surface is asked for by the gate crate, which asks git which
+          # files are tracked, so the run needs the working tree and its index.
+          # No step pushes, so the token is not persisted into .git/config.
+          persist-credentials: false
+
+      - name: Install the pinned toolchain
+        # rust-toolchain.toml names the channel and the components. A version
+        # written here would be a second pin that can disagree with the first.
+        run: rustup toolchain install --profile minimal
+
+      - name: Install the mutation runner
+        # Pinned to a version rather than left to float, because the set of
+        # mutants a version generates is what the count in
+        # docs/mutation-testing.md was measured against, and a run against a
+        # different set is a different measurement wearing the same number.
+        run: cargo install --locked cargo-mutants@27.1.0
+
+      - name: Run over the surface the gate names
+        # The scope comes from the command rather than from this file. An empty
+        # answer stops the run: a mutation run given no files reports nothing
+        # missed, which reads exactly like a surface with no survivors.
+        run: |
+          set -euo pipefail
+          mapfile -t surface < <(cargo run --quiet --locked -p stoffbuch-cli -- surface)
+          if [ "${#surface[@]}" -eq 0 ]; then
+            echo "::error::The gate named no file as part of the refusal surface, so there is nothing to mutate. A run over nothing reports nothing missed."
+            exit 1
+          fi
+          printf 'the surface: %s\n' "${surface[@]}"
+          scope=()
+          for file in "${surface[@]}"; do
+            scope+=(--file "$file")
+          done
+          cargo mutants --no-shuffle -j 2 "${scope[@]}"
+
+      - name: Say which mutants survived
+        # Runs whether or not the step above refused, because the list of
+        # survivors is the whole product of the run and a red step that hid it
+        # would leave a reader with a verdict and no subject. Each survivor is
+        # printed with the change it made, so the code is here rather than a
+        # line number to go and look up.
+        if: always()
+        run: |
+          set -euo pipefail
+          if [ ! -s mutants.out/missed.txt ]; then
+            echo "no mutant survived the suite"
+            exit 0
+          fi
+          echo "mutants that survived the suite:"
+          cat mutants.out/missed.txt
+          echo
+          for diff in mutants.out/diff/*.diff; do
+            [ -e "$diff" ] || continue
+            echo "--- $diff"
+            cat "$diff"
+          done
+
+      - name: Keep the run's own output
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: mutants
+          path: mutants.out/
+          retention-days: 30

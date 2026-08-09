@@ -65,9 +65,17 @@ What consumes it does not read this document. The run prints the surface:
 
     cargo run --quiet --locked -p stoffbuch-cli -- gate
 
-and the line under `surface` names the files, separated by spaces so it can be
-pasted into whatever a coverage or mutation run takes as its scope. Nothing here
-lists them, for the same reason nothing here lists the gate's parts.
+and the line under `surface` names the files, for a person reading the report.
+What a run reads instead is
+
+    cargo run --quiet --locked -p stoffbuch-cli -- surface
+
+which prints one file per line and nothing else, because what consumes it is a
+loop building the arguments of another command, and a heading or a count in that
+output becomes a file name that does not exist. Both come from one walk over the
+tracked files, so the surface a run is pointed at and the surface the check
+placed cannot differ. Nothing here lists them, for the same reason nothing here
+lists the gate's parts.
 
 ## What that naming cannot do
 
