@@ -389,4 +389,85 @@ mod tests {
         );
         assert!(note.contains("1 record(s) could not be read"), "{note}");
     }
+
+    #[test]
+    fn a_tracked_row_absent_from_the_working_copy_is_counted_rather_than_passed_over() {
+        // The three ways a record goes unread are three places in this check,
+        // and a run that passed one of them over silently would report fewer
+        // records than it was given while saying nothing about the difference.
+        // Each has its own fixture below for that reason.
+        let tree = a_tree(
+            "locator-row-gone",
+            &[
+                (
+                    "register/rows/sb-A/sb-A@1.json",
+                    &a_row("page 1197", "sb-src-A"),
+                ),
+                (
+                    "register/rows/sb-B/sb-B@1.json",
+                    &a_row("page 1198", "sb-src-A"),
+                ),
+            ],
+        );
+        std::fs::remove_file(tree.at().join("register/rows/sb-B/sb-B@1.json"))
+            .expect("a file this test just wrote");
+        assert_eq!(
+            note(every_locator_is_in_the_vocabulary(tree.at())),
+            "1 row(s) read under register/rows/, 0 source(s) under register/sources/\n\
+             1 record(s) could not be read"
+        );
+    }
+
+    #[test]
+    fn a_tracked_source_absent_from_the_working_copy_is_counted_rather_than_passed_over() {
+        let tree = a_tree(
+            "locator-source-gone",
+            &[
+                (
+                    "register/rows/sb-A/sb-A@1.json",
+                    &a_row("page 1197", "sb-src-CITED"),
+                ),
+                (
+                    "register/sources/sb-src-CITED/sb-src-CITED@1.json",
+                    &a_source("sb-src-CITED"),
+                ),
+                (
+                    "register/sources/sb-src-GONE/sb-src-GONE@1.json",
+                    &a_source("sb-src-GONE"),
+                ),
+            ],
+        );
+        std::fs::remove_file(
+            tree.at()
+                .join("register/sources/sb-src-GONE/sb-src-GONE@1.json"),
+        )
+        .expect("a file this test just wrote");
+        assert_eq!(
+            note(every_locator_is_in_the_vocabulary(tree.at())),
+            "1 row(s) read under register/rows/, 1 source(s) under register/sources/\n\
+             1 record(s) could not be read"
+        );
+    }
+
+    #[test]
+    fn a_source_this_cannot_read_is_counted_rather_than_named_as_uncited() {
+        // A source whose bytes are not a record has no identifier to compare,
+        // and reporting it as one no row cites would be a second refusal
+        // wearing the report's clothes.
+        let tree = a_tree(
+            "locator-source-unreadable",
+            &[
+                (
+                    "register/rows/sb-A/sb-A@1.json",
+                    &a_row("page 1197", "sb-src-A"),
+                ),
+                ("register/sources/sb-src-A/sb-src-A@1.json", b"{\n"),
+            ],
+        );
+        assert_eq!(
+            note(every_locator_is_in_the_vocabulary(tree.at())),
+            "1 row(s) read under register/rows/, 0 source(s) under register/sources/\n\
+             1 record(s) could not be read"
+        );
+    }
 }
