@@ -33,13 +33,48 @@ const REGISTER: &str = "register/";
 /// which is the whole of the trailing zero rule. A string is decoded, because
 /// the form is a statement about the escapes and two spellings of one string
 /// have to render alike.
-enum Node {
+pub(crate) enum Node {
     Object(Vec<(String, Node)>),
     Array(Vec<Node>),
     Text(String),
     Number(String),
     Truth(bool),
     Nothing,
+}
+
+impl Node {
+    /// The member of this object with that name, where this is an object and
+    /// carries one.
+    ///
+    /// A record whose shape is not what a caller expected gets nothing here
+    /// rather than a substitute. Which fields a record owes is the schema's
+    /// question, and a check that guessed at a missing one would answer it in
+    /// a second place.
+    pub(crate) fn member(&self, name: &str) -> Option<&Self> {
+        let Self::Object(members) = self else {
+            return None;
+        };
+        members
+            .iter()
+            .find(|(held, _)| held == name)
+            .map(|(_, node)| node)
+    }
+
+    /// The string this holds, where it is one.
+    pub(crate) fn text(&self) -> Option<&str> {
+        match self {
+            Self::Text(text) => Some(text),
+            _ => None,
+        }
+    }
+
+    /// The elements this holds, where it is an array.
+    pub(crate) fn elements(&self) -> Option<&[Self]> {
+        match self {
+            Self::Array(elements) => Some(elements),
+            _ => None,
+        }
+    }
 }
 
 /// Why a file has no canonical form.
@@ -87,6 +122,24 @@ impl Fault {
 ///
 /// Returns the fault where the bytes are not a JSON value this form can hold.
 pub(crate) fn canonical(bytes: &[u8]) -> Result<String, Fault> {
+    let text = std::str::from_utf8(bytes).map_err(|_| Fault::NotText)?;
+    let node = read(bytes)?;
+    let mut out = String::with_capacity(text.len());
+    write_node(&node, 0, &mut out);
+    out.push('\n');
+    Ok(out)
+}
+
+/// The value the bytes hold, or why they hold none.
+///
+/// The reading is separate from the rendering because a check that asks what a
+/// record says needs the first and not the second, and a second reader written
+/// for it would be a second answer to what these bytes are.
+///
+/// # Errors
+///
+/// Returns the fault where the bytes are not a JSON value this form can hold.
+pub(crate) fn read(bytes: &[u8]) -> Result<Node, Fault> {
     if bytes.starts_with(&[0xEF, 0xBB, 0xBF]) {
         return Err(Fault::ByteOrderMark);
     }
@@ -97,10 +150,7 @@ pub(crate) fn canonical(bytes: &[u8]) -> Result<String, Fault> {
     if scan.at < text.len() {
         return Err(scan.stop("something follows the value the file holds"));
     }
-    let mut out = String::with_capacity(text.len());
-    write_node(&node, 0, &mut out);
-    out.push('\n');
-    Ok(out)
+    Ok(node)
 }
 
 /// A reader over the text of one file.

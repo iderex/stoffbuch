@@ -1,0 +1,19 @@
+{
+  "authors": [
+    "Q. Xxxxxx",
+    "R. Yyyyyy"
+  ],
+  "container": "Journal of Invented Measurement",
+  "curator": "somebody",
+  "id": "sb-src-ZZZZZZZZZZ",
+  "identifier": "doi:10.9999/fixture.1974.0042",
+  "issue": "4",
+  "kind": "source",
+  "pages": "1197-1203",
+  "terms": "Read on the publisher's own page for this article. Single values may be quoted with the source named; the whole of a table may not.",
+  "title": "A quantity nobody has measured, measured",
+  "type": "journal-article",
+  "version": 1,
+  "volume": "12",
+  "year": "1974"
+}

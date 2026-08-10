@@ -1,0 +1,265 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:stoffbuch:schema:source:1",
+  "title": "source record",
+  "description": "A source record is the published thing a row cites. It lives once and rows point at it by identifier, so a citation cannot drift between two rows that mean the same paper. It asserts that a publication with this citation exists and that its terms were read; it asserts nothing about what the publication says.\n\nThis file is the specification. There is no second document describing these fields in prose, because two homes for one fact drift and the prose is always the one that drifts. Anything a reader needs that the shape cannot carry, including why a field exists, is in the description beside the field. The model this implements is settled in docs/decisions/provenance-and-the-citation-chain.md, and what that record left open by name is the identifier syntax, the locator syntax and the field names, which are decided here and, for the locator, in the gate.\n\nThe version of this schema is the last segment of its $id, and it is 1. It changes when a source that was valid under the old version stops being valid under the new one, or when a source that was invalid starts being valid. A new version is a new file beside this one under a new $id, for the reason the row schema gives.\n\nA source that passes this schema is a well formed source and not a correct one. JSON Schema can refuse a shape, a type, a pattern and a required field. It cannot refuse a year that is in the future, two sources identical in their citation fields, a check digit that does not check, or a source no row references. Every one of those is a check in the gate, and the gate is not this file.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "id",
+    "kind",
+    "terms",
+    "title",
+    "type",
+    "version",
+    "year"
+  ],
+  "properties": {
+    "kind": {
+      "description": "That this file is a source rather than a row. It is written in the file rather than inferred from where the file sits, so a source read on its own says what it is, and so a row filed under a source identifier is refused rather than half read.",
+      "const": "source"
+    },
+    "id": {
+      "description": "The source identifier. Opaque, minted once, never changed, never reused and never derived from anything about the publication, so that a citation corrected later cannot make the identifier wrong. It names a directory, which is what docs/decisions/tree-layout-and-file-naming.md fixed and left the form of to the source register.",
+      "$ref": "#/$defs/source-identifier"
+    },
+    "version": {
+      "description": "The version of this source record, starting at one and incremented by one for each released correction. A chain link names a source by identifier and carries no version, so a correction here reaches every row that cites this publication. That is the opposite of a row, where a correction is a new version a citation resolves to separately, and the difference is deliberate: a row is a claim somebody cited at a version, and a source is the address of a publication, which every row that cites it should hold the corrected form of.",
+      "type": "integer",
+      "minimum": 1
+    },
+    "correction": {
+      "description": "Why this version exists. Not required, and refused outright, at version one, because a first version corrects nothing. Required above version one. That a version above one carries it is a comparison between two fields and is refused by the gate rather than here.",
+      "type": "string",
+      "minLength": 1
+    },
+    "type": {
+      "description": "What kind of published thing this is. A journal article, a conference paper, a technical report, a book or a chapter of one, a standard and a vendor document are found by different routes, and a reader needs to know which they are looking for before they can look. The vocabulary is closed, because a type nobody has decided the required citation fields for is a type no check can hold.",
+      "enum": [
+        "book-or-chapter",
+        "conference-paper",
+        "journal-article",
+        "standard",
+        "technical-report",
+        "vendor-document"
+      ]
+    },
+    "identifier": {
+      "description": "The published identifier, where the publication has one. Not required, because a large part of what this register exists for sits in papers, reports and handbooks from before digital identifiers existed, and a source with none is an ordinary source rather than an incomplete one.\n\nIt is written as the name of its form, a colon, and the identifier as the issuing body writes it, so that the form and the value cannot disagree about which is which and so that the whole thing is one string a diff shows on one line. It is not a URL: a URL is a route to a copy and it rots, and the same identifier reached through two resolvers would be two strings here.\n\nThe set of forms is closed. What each pattern can and cannot refuse is beside it.",
+      "oneOf": [
+        {
+          "description": "A digital object identifier, as the registration agency writes it: the prefix 10, the registrant code, an oblique, and the suffix the publisher chose. The suffix is refused only for being empty or for carrying a space, because a registrant may put almost anything in it and a tighter pattern would refuse honest work.",
+          "pattern": "^doi:10\\.[0-9]{4,9}(\\.[0-9]+)*/[!-~]+$",
+          "type": "string"
+        },
+        {
+          "description": "An arXiv identifier, in either of the two forms that exist. The form used since 2007 is four digits, a full stop and four or five digits; the older one is an archive name, optionally a subject class, an oblique and seven digits. A version suffix is accepted on both. Which of the two a paper carries depends on when it was deposited, so refusing either would refuse a decade of the literature this register is for.",
+          "pattern": "^arxiv:([0-9]{4}\\.[0-9]{4,5}(v[1-9][0-9]*)?|[a-z-]+(\\.[A-Z]{2})?/[0-9]{7}(v[1-9][0-9]*)?)$",
+          "type": "string"
+        },
+        {
+          "description": "An international standard book number, written with the hyphens the issuing agency prints, in the thirteen digit form or the ten digit form whose last character may be an X. The pattern holds the shape and the alphabet. It does not hold the check digit, which is arithmetic over the other digits and is the half of an ISBN that catches a transposition, so a transposed pair here passes this file and is caught by nothing.",
+          "pattern": "^isbn:(97[89]-[0-9]{1,5}-[0-9]{1,7}-[0-9]{1,7}-[0-9]|[0-9]{1,5}-[0-9]{1,7}-[0-9]{1,7}-[0-9X])$",
+          "type": "string"
+        },
+        {
+          "description": "A report designation, as the body that issued the report writes it. There is no registry of these and every issuing body numbers its reports its own way, so the pattern holds only that it opens with a letter or a digit and carries nothing but letters, digits, spaces and the three separators such designations use. It cannot tell a designation that exists from one somebody invented.",
+          "pattern": "^report:[A-Za-z0-9][A-Za-z0-9 ./-]*$",
+          "type": "string"
+        },
+        {
+          "description": "A standard designation with its year, which is the part a citation of a standard cannot leave out: the same designation at two years is two documents, and the values in one are frequently not the values in the other. The year is required after a colon, and the designation before it is held as loosely as a report designation for the same reason.",
+          "pattern": "^standard:[A-Za-z0-9][A-Za-z0-9 ./-]*:[12][0-9]{3}$",
+          "type": "string"
+        }
+      ]
+    },
+    "authors": {
+      "description": "Who wrote it, in the order the publication prints them, each written as the publication prints it. Required for the types a person writes and absent from the types a body issues. Names are not normalised on the way in: a normalisation that merged two people, or split one, would do it silently and everywhere.",
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "title": {
+      "description": "The title of the thing itself: the article, the paper, the report, the book or the chapter, the standard, the document. Required for every type, because a citation with no title is one a reader cannot recognise when they are holding it.",
+      "type": "string",
+      "minLength": 1
+    },
+    "container": {
+      "description": "What it appeared in, where it appeared in something: the journal, the proceedings, or the book a chapter is in. Written out rather than abbreviated, because the abbreviation is what a reader has to expand before they can search, and two abbreviations of one journal are two containers to anything comparing them.",
+      "type": "string",
+      "minLength": 1
+    },
+    "volume": {
+      "description": "The volume of the container, as printed. A string rather than a number, because a volume is printed as A12 and as 7-8 as often as it is printed as 12, and a field that took only numbers would push those into a comment.",
+      "type": "string",
+      "minLength": 1
+    },
+    "issue": {
+      "description": "The issue within the volume, as printed, and a string for the reason the volume is.",
+      "type": "string",
+      "minLength": 1
+    },
+    "pages": {
+      "description": "The pages the thing occupies in its container, as printed. This is the extent of the whole article and not where the number is: where the number is belongs to the row, in its locator, because two rows cite one paper at different tables.",
+      "type": "string",
+      "minLength": 1
+    },
+    "publisher": {
+      "description": "Who published it. Required for a book or a chapter, where the publisher and the edition are what identify the printing, and for a vendor document, where the vendor is the only body standing behind it.",
+      "type": "string",
+      "minLength": 1
+    },
+    "edition": {
+      "description": "Which edition, where the publication states one. Not required, because a first edition frequently says nothing, and a record that carried an invented first here could not be told from one that read it off the page.",
+      "type": "string",
+      "minLength": 1
+    },
+    "issuing-body": {
+      "description": "The body that issued a report or a standard, written as it names itself. Required for those two types, because their designations are only unique inside the body that issues them.",
+      "type": "string",
+      "minLength": 1
+    },
+    "designation": {
+      "description": "The report or standard number the issuing body gave it, as printed. Required for those two types. It is the field a reader searches on, and it is separate from the identifier because a source may carry the designation with no registered identifier at all, which is the ordinary case for a report from before such registries existed.",
+      "type": "string",
+      "minLength": 1
+    },
+    "year": {
+      "description": "The year of the publication, as four digits. Required for every type. Whether a year is in the future is a comparison against the day the check runs rather than a shape, so it is refused by the gate and not here.",
+      "type": "string",
+      "pattern": "^[12][0-9]{3}$"
+    },
+    "terms": {
+      "description": "What the curator understood the terms attached to this publication to permit, and where they read them, written before any value was taken out of it rather than afterwards. Every source carries this: one answer for the whole register would be wrong for part of it, and without the field somebody would have to make the reading again without knowing whether it had ever been made.\n\nIt is prose and deliberately so. What a publisher's notice, a licence or a standards body's conditions say is not a closed vocabulary, and a record that reduced them to one would be recording the reduction rather than the terms. What a check can hold is that the field is here and is not empty, and that is all it holds.",
+      "type": "string",
+      "minLength": 1
+    }
+  },
+  "allOf": [
+    {
+      "description": "A journal article is identified by its authors, the journal it appeared in and the year.",
+      "if": {
+        "properties": {
+          "type": {
+            "const": "journal-article"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "required": [
+          "authors",
+          "container"
+        ]
+      }
+    },
+    {
+      "description": "A conference paper is identified the same way, with the proceedings as the container. Proceedings that were never published are out of reach of this register rather than a case for a weaker rule.",
+      "if": {
+        "properties": {
+          "type": {
+            "const": "conference-paper"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "required": [
+          "authors",
+          "container"
+        ]
+      }
+    },
+    {
+      "description": "A technical report is found through the body that issued it and the number that body gave it. Either alone is not enough: report numbers are only unique inside their issuing body.",
+      "if": {
+        "properties": {
+          "type": {
+            "const": "technical-report"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "required": [
+          "authors",
+          "designation",
+          "issuing-body"
+        ]
+      }
+    },
+    {
+      "description": "A book or a chapter of one is found through its authors and its publisher. Where it is a chapter, the book is the container and the chapter is the title.",
+      "if": {
+        "properties": {
+          "type": {
+            "const": "book-or-chapter"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "required": [
+          "authors",
+          "publisher"
+        ]
+      }
+    },
+    {
+      "description": "A standard is issued by a body rather than written by named people, so authors are not required of it, and its designation and issuing body are what a reader searches on.",
+      "if": {
+        "properties": {
+          "type": {
+            "const": "standard"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "required": [
+          "designation",
+          "issuing-body"
+        ]
+      }
+    },
+    {
+      "description": "A vendor document frequently names no author at all, and the vendor is the body standing behind it, so the publisher is what is required in place of the authors.",
+      "if": {
+        "properties": {
+          "type": {
+            "const": "vendor-document"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "required": [
+          "publisher"
+        ]
+      }
+    }
+  ],
+  "$defs": {
+    "source-identifier": {
+      "description": "The string sb-src- followed by ten characters of Crockford's base32 alphabet, which leaves out the four letters that are read or copied as digits. The prefix is longer than a row's so that an identifier says which register resolves it, and so that a source identifier written where a row identifier belongs is refused by shape rather than by a lookup.",
+      "type": "string",
+      "pattern": "^sb-src-[0-9A-HJKMNP-TV-Z]{10}$"
+    }
+  }
+}

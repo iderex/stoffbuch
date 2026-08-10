@@ -7,7 +7,7 @@
 //! should not have to carry the machinery that refuses a bad one.
 //!
 //! The schema exists and the check does not. What this crate holds today is
-//! the fixtures under `fixtures/`, one directory per row kind, and the suite
+//! the fixtures under `fixtures/`, one directory per record kind, and the suite
 //! below that keeps them honest. Nothing here reads a schema or decides a
 //! refusal; the fixtures are run against the schema by a validator written by
 //! somebody else, which is the property the format was chosen for, and the
@@ -26,7 +26,7 @@ mod tests {
         Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join("..")
     }
 
-    /// One row kind's schema and the fixtures that stand for it.
+    /// One record kind's schema and the fixtures that stand for it.
     struct Kind {
         /// The schema file, under `schema/` at the workspace root.
         file: &'static str,
@@ -42,24 +42,47 @@ mod tests {
         refused: &'static [&'static str],
     }
 
-    /// Every row kind that has a schema.
+    /// Every record kind that has a schema.
     ///
     /// This is what the two set comparisons below are made against, so a schema
     /// or a fixture added without an entry here reddens the suite, and an entry
     /// naming a file that is not in the tree reddens it from the other side.
-    const KINDS: &[Kind] = &[Kind {
-        file: "measured-value.schema.json",
-        id: "urn:stoffbuch:schema:measured-value:1",
-        fixtures: "measured-value",
-        accepted: "valid.json",
-        refused: &[
-            "declared-kind-is-another-kind.json",
-            "missing-required-field.json",
-            "unit-is-not-in-the-accepted-syntax.json",
-            "unknown-field.json",
-            "value-is-not-a-number.json",
-        ],
-    }];
+    const KINDS: &[Kind] = &[
+        Kind {
+            file: "measured-value.schema.json",
+            id: "urn:stoffbuch:schema:measured-value:1",
+            fixtures: "measured-value",
+            accepted: "valid.json",
+            refused: &[
+                "declared-kind-is-another-kind.json",
+                "missing-required-field.json",
+                "unit-is-not-in-the-accepted-syntax.json",
+                "unknown-field.json",
+                "value-is-not-a-number.json",
+            ],
+        },
+        Kind {
+            file: "source.schema.json",
+            id: "urn:stoffbuch:schema:source:1",
+            fixtures: "source",
+            accepted: "valid.json",
+            refused: &[
+                "a-standard-without-what-a-standard-needs.json",
+                "arxiv-identifier-is-not-in-the-form-it-declares.json",
+                "declared-kind-is-another-kind.json",
+                "doi-is-not-in-the-form-it-declares.json",
+                "id-is-a-row-identifier.json",
+                "identifier-form-is-not-in-the-vocabulary.json",
+                "isbn-is-not-in-the-form-it-declares.json",
+                "missing-required-field.json",
+                "report-designation-is-not-in-the-form-it-declares.json",
+                "standard-designation-carries-no-year.json",
+                "type-is-not-in-the-vocabulary.json",
+                "unknown-field.json",
+                "year-is-not-a-year.json",
+            ],
+        },
+    ];
 
     /// The dialect every schema in this tree is written in.
     const DIALECT: &str = "\"$schema\": \"https://json-schema.org/draft/2020-12/schema\"";
