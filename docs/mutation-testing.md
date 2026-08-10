@@ -67,9 +67,79 @@ Nothing was recorded as not mattering. The two column-width mutants were the
 candidates, and a test asserting that every verdict starts at the same column
 was cheaper than the argument for leaving them alive.
 
+## The second file, and what a full run over it found
+
+The triage above is one file and the surface names two. The full run over the
+second, on `main` at `591b79e2aba896a35a047e90ab0bdc1e45b37c29`:
+
+    cargo mutants --no-shuffle --file crates/stoffbuch-gate/src/canonical.rs -j 4
+    166 mutants tested in 37m: 17 missed, 112 caught, 32 unviable, 5 timeouts
+
+Seventeen survivors, in six shapes.
+
+Seven were the escape table in the string reader, one arm each for `\"`, `\\`,
+`\b`, `\f`, `\n`, `\r` and `\t`. Delete an arm and that escape becomes a
+spelling the grammar does not have, so a record carrying it is refused for being
+correct, which is a refusal a curator cannot act on. The only two escapes the
+suite reached were the two the form does something visible with: the solidus it
+writes out, and the surrogate pair it joins.
+
+Four were the counters in the check that reads the tree, the records read and
+the records tracked but absent from the working copy. A mutant there leaves the
+verdict right and the disclosure wrong, which is the same shape the first run
+found in the same place and for the same reason.
+
+Two more were in that function and are not counters. One is the negation that
+chooses between refusing and passing: without it the check refuses a clean tree
+and passes a broken one. The other is the comparison deciding whether the absent
+files are mentioned at all, which is the difference between a count a reader can
+act on and one that says a register was read whole when part of it was not
+there.
+
+Two were the step over the sign of a negative number. No fixture in the suite
+had one, and a published coefficient is as often negative as not, so the reader
+could stop taking half the numbers this register is for and nothing would say
+so.
+
+One was the arm refusing an unescaped control character inside a string, which
+is how a tab pasted out of a table reaches a record.
+
+One was the comparison deciding whether anything follows the value a file holds.
+That is the survivor this was opened on and the reason it was known before the
+run was made: reversed, a file carrying a second value after the first is
+accepted, and the form written back is the first value alone with the rest gone
+and nothing in a diff to say so.
+
+Five mutants are reported as timeouts rather than as caught or missed. Each is a
+step through the text replaced by one that does not advance, so the reader loops
+and the suite never finishes. They are counted apart from the survivors, and no
+test kills one: a test asserts something about what the code returned, and this
+code returns nothing. What stops them is the run's own clock.
+[#116](https://github.com/iderex/stoffbuch/issues/116) holds them and says what
+they are a fact about.
+
+## The triage of the second file
+
+Every one of the seventeen became a test and nothing was recorded as not
+mattering. The escapes are a row per escape rather than one row carrying all of
+them, so a failure names the one the reader lost. The negative number and the
+control character are fixtures of the shape a curator actually writes. The
+counters, the negation and the comparison are reached the only way they can be,
+by giving the check a tree with a register in it, which is what the first file's
+triage had to do as well.
+
+What says each of the seventeen is dead is the run over the whole surface below
+rather than the argument above. That run applies every mutant on its own and
+reports which the suite let through, so a test written to kill one and missing
+it shows there rather than in a sentence here.
+
+The tree builder the first file's suite carries is used rather than a second one
+written beside it. Two builders would be two answers to what a tree is, and they
+would agree until the day a check started reading something new.
+
 ## The threshold, and the date it was set
 
-The same run again, over the same file, with the tests above in place:
+The first file again, with its own triage in place:
 
     cargo mutants --file crates/stoffbuch-gate/src/lib.rs -j 4
     140 mutants tested in 26m: 63 caught, 77 unviable
@@ -83,30 +153,31 @@ Set on 2026-08-09 from the measurement above rather than chosen in advance,
 because a number picked before the survivors are triaged is a guess that later
 gets quoted as a standard.
 
+The whole surface, with both triages in place:
+
+    cargo mutants --no-shuffle --file crates/stoffbuch-gate/src/canonical.rs --file crates/stoffbuch-gate/src/lib.rs -j 8
+    306 mutants tested in 33m: 192 caught, 109 unviable, 5 timeouts
+
+No mutant survives the whole surface, measured on 2026-08-10. The job count is
+higher than the one the workflow gives it because this machine has more
+processors to spare; how many run at once moves the wall clock and not the set.
+
+That run still exits non-zero, and what makes it non-zero is the five timeouts
+rather than anything the suite let through:
+
+    echo "exit=$?"
+    exit=3
+
+The run is red and nothing survived it, and those are two sentences about the
+same run rather than one. Reading the first as the second is the mistake this
+section exists to stop, which is why the threshold is written about survivors
+and not about the exit code.
+
 It is a threshold that will need revisiting rather than one that holds forever.
 It is affordable while the surface is small, and the honest moment to change it
 is when a run over a wider surface makes it a wall rather than a bar. Whoever
 changes it states the measurement it was changed from and the date, in this
 section, the same way this one does.
-
-## The threshold is not met today
-
-The triage above is one file, and the surface names two. The second was added
-the day this was measured, and a run over it was started and stopped after seven
-of its one hundred and sixty-six mutants. One of the seven survived:
-
-    cargo mutants --file crates/stoffbuch-gate/src/canonical.rs -j 4
-    crates/stoffbuch-gate/src/canonical.rs:97:16: replace < with > in canonical
-
-So there is a comparison on the surface that can be reversed with nothing going
-red, the rest of that file is unmeasured, and the first scheduled run over the
-whole surface should be expected to refuse. That is a true statement about the
-tree rather than a check that arrived broken, and the alternative, a threshold
-written to fit what happens to pass today, is the thing that makes a green run
-mean nothing.
-
-[#114](https://github.com/iderex/stoffbuch/issues/114) holds the full run over
-that file and the triage of what it finds.
 
 ## Why it is off the pull request path
 

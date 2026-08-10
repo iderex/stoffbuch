@@ -1802,10 +1802,16 @@ body
     // was covered and still passed with `ran` counting downwards.
 
     /// A tree on disk with a git index, removed when it goes out of scope.
-    struct Tree(PathBuf);
+    ///
+    /// This and the three helpers below are reachable from the suites of the
+    /// other modules in this crate, because every check here asks git what is
+    /// tracked and so every one of them needs a tree. A second builder written
+    /// beside this one would be a second answer to what a tree is, and the two
+    /// would agree until the day a check started reading something new.
+    pub(crate) struct Tree(PathBuf);
 
     impl Tree {
-        fn at(&self) -> &Path {
+        pub(crate) fn at(&self) -> &Path {
             &self.0
         }
     }
@@ -1820,7 +1826,7 @@ body
     ///
     /// The tests run in parallel in one process, so the name separates them
     /// from each other and the process id separates one run from the next.
-    fn somewhere(named: &str) -> PathBuf {
+    pub(crate) fn somewhere(named: &str) -> PathBuf {
         let at = std::env::temp_dir().join(format!("stoffbuch-{}-{named}", std::process::id()));
         let _ = std::fs::remove_dir_all(&at);
         std::fs::create_dir_all(&at).expect("a directory under the temporary directory");
@@ -1828,7 +1834,7 @@ body
     }
 
     /// Builds a tree of `files` and indexes it, so `tracked` has an answer.
-    fn a_tree(named: &str, files: &[(&str, &[u8])]) -> Tree {
+    pub(crate) fn a_tree(named: &str, files: &[(&str, &[u8])]) -> Tree {
         let at = somewhere(named);
         for (name, bytes) in files {
             let path = at.join(name);
@@ -1869,7 +1875,7 @@ body
     }
 
     /// What a check said when it refused nothing.
-    fn note(judged: Judged) -> String {
+    pub(crate) fn note(judged: Judged) -> String {
         match judged {
             Judged::Nothing(Some(note)) => note,
             other => panic!("expected a clean verdict carrying a note, and got {other:?}"),
@@ -1877,7 +1883,7 @@ body
     }
 
     /// What a check wrote when it refused.
-    fn refusal(judged: Judged) -> String {
+    pub(crate) fn refusal(judged: Judged) -> String {
         match judged {
             Judged::Refused(why) => why,
             other => panic!("expected a refusal, and got {other:?}"),
