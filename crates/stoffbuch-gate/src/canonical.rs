@@ -694,6 +694,42 @@ mod tests {
     }
 
     #[test]
+    fn something_after_the_value_the_file_holds_is_refused() {
+        // One record per file is the whole of the layout, so a second value
+        // after the first is a file two readers disagree about. The form
+        // written back would be the first value alone, with everything after
+        // it gone and nothing in the diff to say so.
+        let two = b"{\n  \"digits\": \"1.1200\"\n}\n{\n  \"digits\": \"1.13\"\n}\n";
+        let Err(Fault::Unreadable { line, why }) = canonical(two) else {
+            panic!("a file holding two values");
+        };
+        assert_eq!(line, 4);
+        assert!(why.contains("something follows the value"), "{why}");
+        assert!(
+            canonical(b"{\n  \"digits\": \"1.1200\"\n}\n").is_ok(),
+            "the neighbour, which is the same first value with nothing after it"
+        );
+    }
+
+    #[test]
+    fn an_escape_whose_digits_are_not_hexadecimal_is_refused() {
+        // The ordinary way of reading a number in a base accepts a leading
+        // sign, so this spelling is read as the character A by a reader that
+        // hands its four bytes straight over, and the file passes carrying an
+        // escape the grammar does not have.
+        let signed = b"{\n  \"note\": \"\\u+041\"\n}\n";
+        let Err(Fault::Unreadable { why, .. }) = canonical(signed) else {
+            panic!("an escape whose digits are not hexadecimal");
+        };
+        assert!(why.contains("not hexadecimal"), "{why}");
+        let neighbour = b"{\n  \"note\": \"\\u0041\"\n}\n";
+        assert_eq!(
+            canonical(neighbour).expect("a row"),
+            "{\n  \"note\": \"A\"\n}\n"
+        );
+    }
+
+    #[test]
     fn a_refusal_names_which_of_the_faults_it_is() {
         // A check that started refusing everything passes a test that only
         // asked whether something was refused, so every fixture above asserts
@@ -719,6 +755,49 @@ mod tests {
                 "two faults say the same thing: {one}"
             );
         }
+    }
+
+    #[test]
+    fn a_negative_number_keeps_its_sign() {
+        // A coefficient in a published fit is as often negative as not, and
+        // the sign is a byte the reader steps over rather than one it writes
+        // down. A reader that steps over it wrongly either refuses the row or
+        // reads a different number out of it, and both are silent.
+        let row = "{\n  \"digits\": -1.1200\n}\n";
+        assert_eq!(canonical(row.as_bytes()).expect("a row"), row);
+        let exponent = "{\n  \"digits\": 1.5e-03\n}\n";
+        assert_eq!(canonical(exponent.as_bytes()).expect("a row"), exponent);
+    }
+
+    #[test]
+    fn every_escape_the_grammar_has_is_read_and_written_back() {
+        // One row per escape rather than one row carrying all of them, so a
+        // failure names the escape the reader lost. Each of these is already
+        // the form's own spelling, so the row it is in comes back byte for
+        // byte; a reader that has forgotten one refuses a record for being
+        // correct, which is the refusal a curator has no way to act on.
+        for escape in ["\\\"", "\\\\", "\\b", "\\f", "\\n", "\\r", "\\t"] {
+            let row = format!("{{\n  \"note\": \"a{escape}b\"\n}}\n");
+            let form = canonical(row.as_bytes())
+                .unwrap_or_else(|fault| panic!("{escape}: {}", fault.says()));
+            assert_eq!(form, row, "{escape}");
+        }
+    }
+
+    #[test]
+    fn a_control_character_inside_a_string_is_refused_and_its_escape_is_not() {
+        // A tab pasted into a note out of a table is how this arrives. Taken
+        // rather than refused, the byte reaches the register unescaped, where
+        // the grammar does not allow it and the next reader will not take the
+        // file at all.
+        let raw = b"{\n  \"note\": \"two\tcolumns\"\n}\n";
+        let Err(Fault::Unreadable { line, why }) = canonical(raw) else {
+            panic!("a control character inside a string");
+        };
+        assert_eq!(line, 2);
+        assert!(why.contains("control character"), "{why}");
+        let escaped = "{\n  \"note\": \"two\\tcolumns\"\n}\n";
+        assert_eq!(canonical(escaped.as_bytes()).expect("a row"), escaped);
     }
 
     #[test]
@@ -794,6 +873,23 @@ mod tests {
     }
 
     #[test]
+    fn a_file_carrying_a_line_the_form_does_not_have_is_reported_at_that_line() {
+        // Where one rendering runs on past the end of the other there is no
+        // differing byte to point at, so the position taken is the end of the
+        // shorter one. Taken at the end of the longer one instead, the line
+        // reported is past the end of both, and both sides read as nothing,
+        // which prints the sentence for a byte that does not show and hides
+        // the line a curator has to go and look at.
+        let found = "a\nb\nc\n";
+        let said = first_difference(found, "a\nb\n").expect("two texts that differ");
+        assert!(said.starts_with("line 3 reads   c"), "{said}");
+        assert!(
+            said.contains("the form is   nothing, the text ends above here"),
+            "{said}"
+        );
+    }
+
+    #[test]
     fn a_difference_no_reader_could_see_is_said_to_be_one() {
         // The near miss for the report itself. A line comparison would return
         // nothing here, and a run that printed nothing while refusing a file
@@ -860,5 +956,111 @@ mod tests {
                 into.push(path);
             }
         }
+    }
+
+    // The check, given a tree.
+    //
+    // Everything above this line hands the formatter its bytes directly. The
+    // check itself asks git what is tracked, so the only way to give it a
+    // subject is to build a tree and index one, and until it was given one the
+    // counters in its report, the branch that chooses between refusing and
+    // passing, and the filter deciding which files it reads were all reachable
+    // by nothing. The builder is the gate's own rather than a second one
+    // written here, so there is one answer to what a tree is.
+
+    use crate::tests::{a_tree, note, somewhere};
+
+    /// One record, in the form.
+    const ROW: &[u8] = b"{\n  \"digits\": \"1.1200\",\n  \"unit\": \"eV\"\n}\n";
+
+    /// What the check wrote when it refused.
+    ///
+    /// Named apart from this module's own `refusal`, which is the text rather
+    /// than the reading of a verdict.
+    fn what_it_wrote(judged: Judged) -> String {
+        crate::tests::refusal(judged)
+    }
+
+    #[test]
+    fn a_tree_of_records_in_the_form_is_reported_with_the_count_of_what_was_read() {
+        // The two files beside the record are the ones that decide what the
+        // subject is. A block is under the register and is not this format, and
+        // a schema is this format and is not under the register, so a check
+        // reading either of them is reading something the form is not a promise
+        // about and its count says it examined more than it did.
+        let tree = a_tree(
+            "canonical-clean",
+            &[
+                ("register/rows/sb-A/sb-A@1.json", ROW),
+                (
+                    "register/rows/sb-A/sb-A@1.n-and-k.tsv",
+                    b"T\tn\n300\t3.42\n",
+                ),
+                ("schema/measured-value.schema.json", b"{\n  \"a\": 1\n}\n"),
+            ],
+        );
+        assert_eq!(
+            note(every_record_is_in_the_canonical_form(tree.at())),
+            "1 record(s) read under register/"
+        );
+    }
+
+    #[test]
+    fn a_record_out_of_the_form_is_refused_with_the_file_and_the_line() {
+        let swapped = b"{\n  \"unit\": \"eV\",\n  \"digits\": \"1.1200\"\n}\n";
+        let tree = a_tree(
+            "canonical-out-of-order",
+            &[("register/rows/sb-A/sb-A@1.json", swapped)],
+        );
+        let why = what_it_wrote(every_record_is_in_the_canonical_form(tree.at()));
+        assert!(
+            why.contains("1 record(s) are not in the canonical form"),
+            "{why}"
+        );
+        assert!(why.contains("  register/rows/sb-A/sb-A@1.json"), "{why}");
+        assert!(why.contains("line 2 reads"), "{why}");
+    }
+
+    #[test]
+    fn a_record_that_is_not_this_format_at_all_is_refused_by_the_fault_it_has() {
+        // A row written in the format the format decision rejected, which is
+        // the mistake a curator coming from the neighbouring collection makes.
+        let tree = a_tree(
+            "canonical-not-json",
+            &[("register/rows/sb-A/sb-A@1.json", b"digits: 1.1200\n")],
+        );
+        let why = what_it_wrote(every_record_is_in_the_canonical_form(tree.at()));
+        assert!(why.contains("line 1: expected a value"), "{why}");
+    }
+
+    #[test]
+    fn a_tracked_record_absent_from_the_working_copy_is_counted_rather_than_passed_over() {
+        let tree = a_tree(
+            "canonical-absent",
+            &[
+                ("register/rows/sb-A/sb-A@1.json", ROW),
+                ("register/rows/sb-B/sb-B@1.json", ROW),
+            ],
+        );
+        std::fs::remove_file(tree.at().join("register/rows/sb-B/sb-B@1.json"))
+            .expect("a file this test just wrote");
+        assert_eq!(
+            note(every_record_is_in_the_canonical_form(tree.at())),
+            "1 record(s) read under register/, 1 tracked but not in the working copy"
+        );
+    }
+
+    #[test]
+    fn a_directory_git_knows_nothing_about_is_not_reported_as_a_register_with_no_records() {
+        // The near miss for the whole apparatus. `git ls-files` fails outside a
+        // checkout, and a check reading that failure as an empty list would
+        // report every record clean without having read one.
+        let at = somewhere("canonical-not-a-repository");
+        let judged = every_record_is_in_the_canonical_form(&at);
+        let _ = std::fs::remove_dir_all(&at);
+        assert!(
+            matches!(judged, Judged::CouldNotJudge(_)),
+            "expected a run that could not judge, and got {judged:?}"
+        );
     }
 }
