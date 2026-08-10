@@ -87,6 +87,33 @@ schema yet. That check is issue #32 and until it lands a well formed row rests
 on you and on the review, so a run that went green has said nothing about your
 row.
 
+## The paper states no uncertainty
+
+Take the value anyway, and say in the row that the publication stated none.
+
+Most of the literature this register is about states no uncertainty. A register
+that admitted only the values with one would hold a small, recent and unusually
+tidy corner of the field, and the values it left out are exactly the ones nobody
+can currently trace, which is the whole reason for the work. So the line is not
+that every row states an uncertainty. It is that every row states something, and
+that a publication's silence is written down as a silence rather than left as an
+empty field.
+
+What that costs the reader is worth being plain about, because it is paid by
+somebody who is not you. A row that states no uncertainty cannot be pooled with
+other rows, cannot be weighted against them, and cannot be propagated through a
+calculation that reports an uncertainty at the end. A calculation over such a
+row produces a result with no uncertainty and a warning naming the row that
+caused it, and an export to a format with no way to write an absence refuses
+rather than filling one in. None of that is a penalty for the row. It is the
+only honest thing to do with a number nobody characterised, and the alternative
+is worse in a way that hides: a zero in that field would make the least
+trustworthy rows in the register read as the most trustworthy ones.
+
+`docs/decisions/uncertainty.md` argues it in full, with what each of the reading
+rules assumes and what would show the assumption wrong. Read it before you reach
+for one of them, and never apply one because the field looked empty.
+
 ## What you have to have read
 
 Say which link in the chain you read, and say it honestly. A curator who read a
