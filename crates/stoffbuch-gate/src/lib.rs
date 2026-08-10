@@ -123,6 +123,11 @@ const PARTS: &[Part] = &[
         runs: Runs::Check(no_carriage_return),
     },
     Part {
+        name: "guards",
+        examines: "every tracked text file, for a character that reorders what a reader sees, and the guards only the server runs",
+        runs: Runs::Check(every_guard_is_accounted_for),
+    },
+    Part {
         name: "headless",
         examines: "the test code in every tracked Rust file, for a surface a test may not reach",
         runs: Runs::Check(a_test_reaches_nothing_it_may_not),
@@ -361,6 +366,317 @@ pub(crate) fn tracked(root: &Path) -> Result<Vec<String>, String> {
 /// Whether a file carries a carriage return anywhere in it.
 fn carries_a_carriage_return(bytes: &[u8]) -> bool {
     bytes.contains(&b'\r')
+}
+
+/// A run of characters that changes what a reader sees without changing what a
+/// parser reads, with the rule it comes from and how the guard on the server
+/// writes it.
+///
+/// The range is held here rather than a pattern, so that a refusal can print
+/// the codepoint and the rule instead of an expression somebody has to decode,
+/// and so that the character itself never has to appear in what a refusal
+/// writes.
+struct Reordering {
+    /// The first codepoint of the run.
+    first: char,
+    /// The last codepoint of the run, which is `first` where the run is one
+    /// character.
+    last: char,
+    /// What the run does, in words a contributor can act on.
+    rule: &'static str,
+}
+
+impl Reordering {
+    /// The run as the guard on the server spells it inside its pattern.
+    ///
+    /// Derived from the range rather than written beside it. Held as a second
+    /// field it could disagree with the range it names, and then a run
+    /// narrowed by one codepoint would still find its own spelling in the
+    /// pattern and report the two guards as agreeing.
+    fn spelled(&self) -> String {
+        if self.first == self.last {
+            format!("\\x{{{:04X}}}", u32::from(self.first))
+        } else {
+            format!(
+                "\\x{{{:04X}}}-\\x{{{:04X}}}",
+                u32::from(self.first),
+                u32::from(self.last)
+            )
+        }
+    }
+}
+
+/// Every run of characters this refuses.
+///
+/// It is the set the guard on the server carries, and the two are held
+/// together below rather than left to agree by memory. Ordinary characters
+/// outside ASCII are not in it and may not be: this register cites authors,
+/// journals and materials whose names carry them, in exactly the fields a
+/// citation depends on, so a guard that refused them would refuse half the
+/// literature.
+///
+/// The byte order mark is deliberately absent, for the reason the guard on the
+/// server writes beside its pattern. For a register record it is refused
+/// anyway, by the canonical form, which requires UTF-8 with none.
+const REORDERING: &[Reordering] = &[
+    Reordering {
+        first: '\u{202A}',
+        last: '\u{202E}',
+        rule: "an embedding or an override reorders every character after it until it is \
+               popped, so a line reads one way and says another",
+    },
+    Reordering {
+        first: '\u{2066}',
+        last: '\u{2069}',
+        rule: "an isolate reorders the run it encloses, and nothing in the rendered line \
+               shows where that run began",
+    },
+    Reordering {
+        first: '\u{200E}',
+        last: '\u{200E}',
+        rule: "a left-to-right mark changes the direction of what follows it and takes no \
+               width, so a diff shows nothing",
+    },
+    Reordering {
+        first: '\u{200F}',
+        last: '\u{200F}',
+        rule: "a right-to-left mark changes the direction of what follows it and takes no \
+               width, so a diff shows nothing",
+    },
+    Reordering {
+        first: '\u{061C}',
+        last: '\u{061C}',
+        rule: "an Arabic letter mark changes direction and takes no width",
+    },
+    Reordering {
+        first: '\u{200B}',
+        last: '\u{200D}',
+        rule: "a zero width space, non-joiner or joiner splits or joins what renders as one \
+               word, so two identifiers that look identical are not",
+    },
+    Reordering {
+        first: '\u{2060}',
+        last: '\u{2060}',
+        rule: "a word joiner takes no width and has no use in a register file",
+    },
+];
+
+/// Where the guard that runs on the server keeps the same set.
+///
+/// It is read rather than trusted. The name that job produces is required by
+/// the protection rule on the default branch, so this file cannot replace it
+/// and the two are copies; what stops a copy going stale is that one of them
+/// refuses when the other moves.
+const SERVER_SIDE_GUARD: &str = ".github/workflows/unicode-guard.yml";
+
+/// A guard this repository has that this command does not run, and what
+/// running it here would cost.
+///
+/// They are named so that a clean run cannot be read as a run that covered
+/// them. Every one of them reads something no clone holds, which is why the
+/// answer for each is the same shape: it stays where it is, and the reason is
+/// here rather than in a document.
+struct Elsewhere {
+    /// The name its run carries, which is the only handle a protection rule
+    /// has on it.
+    name: &'static str,
+    /// What it reads.
+    reads: &'static str,
+    /// What running it inside this command would cost.
+    cost: &'static str,
+}
+
+/// Every guard that runs on the server and not here.
+const ELSEWHERE: &[Elsewhere] = &[
+    Elsewhere {
+        name: "DCO sign-off",
+        reads: "every commit of a change against the base it was opened on",
+        cost: "a base nobody has named locally, so a run here would judge whatever this \
+               clone last fetched and call it the change",
+    },
+    Elsewhere {
+        name: "dependency-review",
+        reads: "what a change adds to the dependency graph, as the forge computes it for a \
+                base and a head",
+        cost: "a call out to that forge on every run, and a credential to make it with, \
+               neither of which this command has or wants",
+    },
+    Elsewhere {
+        name: "Audit workflows (zizmor)",
+        reads: "the workflow files, for the ways a job can be made to do what it was not \
+                asked to",
+        cost: "an analyser this tree does not carry, so a second toolchain pinned and \
+               installed before the gate could start",
+    },
+    Elsewhere {
+        name: "Scorecard analysis",
+        reads: "the repository's own settings and history, which live at the forge rather \
+                than in the tree",
+        cost: "the same call out and credential as the dependency review, over state no \
+               clone holds",
+    },
+];
+
+/// Refuses a tracked text file carrying a character that reorders what a
+/// reader sees, and names the guards this command did not run.
+///
+/// The register is the reason this is not only a source code rule. A citation
+/// is text a person reads and a locator is text a person follows, and a
+/// character that reorders a rendered line makes the page number a reader sees
+/// different from the one the file carries. That failure is invisible in a
+/// diff, which is where curation is reviewed.
+///
+/// It refuses the set and nothing wider. Ordinary characters outside ASCII
+/// pass, because the fields a citation depends on are full of them, and the
+/// pair of fixtures in the suite holds both directions rather than a comment
+/// asserting them.
+///
+/// The other four guards are not run and are named instead. Each reads
+/// something that exists at the forge rather than in a clone, so bringing one
+/// here would mean judging a substitute for its subject, which is worse than
+/// saying plainly that it ran elsewhere.
+fn every_guard_is_accounted_for(root: &Path) -> Judged {
+    let tracked = match tracked(root) {
+        Ok(tracked) => tracked,
+        Err(why) => return Judged::CouldNotJudge(why),
+    };
+
+    let Ok(server) = std::fs::read_to_string(root.join(SERVER_SIDE_GUARD)) else {
+        return Judged::Refused(format!(
+            "{SERVER_SIDE_GUARD} could not be read, so the check whose name the protection \
+             rule on the default branch requires is not in this tree. A rule pointing at a \
+             name nothing produces passes everything.\n"
+        ));
+    };
+    let adrift = adrift_from(&server);
+    if !adrift.is_empty() {
+        let mut why = format!(
+            "{} run(s) refused here are not in the pattern {SERVER_SIDE_GUARD} uses, so the \
+             two guards disagree about what they refuse:\n\n",
+            adrift.len()
+        );
+        for run in &adrift {
+            let _ = writeln!(why, "  {}\n      {}", run.spelled(), run.rule);
+        }
+        let _ = writeln!(
+            why,
+            "\nThe set is one thing held in two places because the name that job produces is \
+             required for a merge. Move both or neither."
+        );
+        return Judged::Refused(why);
+    }
+
+    let mut offences = Vec::new();
+    let mut read = 0_usize;
+    let mut binary = 0_usize;
+    let mut undecodable = Vec::new();
+
+    for name in tracked {
+        let Ok(bytes) = std::fs::read(root.join(&name)) else {
+            continue;
+        };
+        if is_binary(&bytes) {
+            binary += 1;
+            continue;
+        }
+        let Ok(text) = std::str::from_utf8(&bytes) else {
+            // Not UTF-8, so its characters cannot be read and nothing about it
+            // is known. Named rather than counted, because a file this check
+            // did not judge is the one place it fails open.
+            undecodable.push(name);
+            continue;
+        };
+        read += 1;
+        for (line, character, run) in reorders(text) {
+            offences.push(format!(
+                "  {name}:{line}  U+{:04X}\n      {}",
+                u32::from(character),
+                run.rule
+            ));
+        }
+    }
+
+    if !offences.is_empty() {
+        let mut why = format!(
+            "{} character(s) that reorder what a reader sees:\n\n",
+            offences.len()
+        );
+        for offence in &offences {
+            let _ = writeln!(why, "{offence}");
+        }
+        let _ = writeln!(
+            why,
+            "\nThe codepoint is printed and the character is not, so this refusal can be \
+             quoted into an issue without carrying the thing it is about."
+        );
+        return Judged::Refused(why);
+    }
+
+    let mut note = format!("{read} text file(s) read");
+    if binary > 0 {
+        let _ = write!(note, ", {binary} skipped as binary and not judged");
+    }
+    for name in &undecodable {
+        let _ = write!(note, ", {name} is not UTF-8 and was not judged");
+    }
+    let _ = write!(
+        note,
+        "\n{} guard(s) run at the forge and not here, and what running each here would cost:",
+        ELSEWHERE.len()
+    );
+    for guard in ELSEWHERE {
+        let _ = write!(
+            note,
+            "\n  {}\n    reads {}\n    would cost {}",
+            guard.name, guard.reads, guard.cost
+        );
+    }
+    Judged::Nothing(Some(note))
+}
+
+/// Every run this refuses that the text of the server-side guard does not
+/// name.
+///
+/// The comparison is over the spelling the pattern uses rather than over a
+/// parse of it, because a parser for one pattern dialect is a third place the
+/// set could be wrong, and what is wanted here is only whether the two say the
+/// same thing.
+///
+/// Only the line that assigns the pattern is read. The prose around it names
+/// several of these codepoints in another spelling, and reading the whole file
+/// would let a comment stand in for the pattern, which is the direction that
+/// fails open. A file with no such line leaves every run adrift and is
+/// refused.
+fn adrift_from(server: &str) -> Vec<&'static Reordering> {
+    let pattern = server
+        .lines()
+        .find(|server_line| server_line.trim_start().starts_with("pattern="))
+        .unwrap_or_default();
+    REORDERING
+        .iter()
+        .filter(|run| !pattern.contains(&run.spelled()))
+        .collect()
+}
+
+/// Every reordering character in `text`, with the line it is on and the run it
+/// belongs to.
+///
+/// The line is counted from one, and each occurrence is reported rather than
+/// each file, because the repair is per occurrence and a count of files would
+/// leave a reader hunting.
+fn reorders(text: &str) -> Vec<(usize, char, &'static Reordering)> {
+    let mut found = Vec::new();
+    for (index, text_line) in text.lines().enumerate() {
+        for character in text_line.chars() {
+            if let Some(run) = REORDERING
+                .iter()
+                .find(|run| character >= run.first && character <= run.last)
+            {
+                found.push((index + 1, character, run));
+            }
+        }
+    }
+    found
 }
 
 /// A surface a test may not reach, with the rule it comes from.
@@ -1055,7 +1371,13 @@ fn line(result: &Reported, width: usize) -> String {
                 result.examines
             );
             if let Some(note) = note {
-                let _ = writeln!(line, "{:width$}  {note}", "");
+                // Indented a line at a time. A note that says what a part did
+                // not reach can carry more than one thing, and a second line
+                // left at column zero reads as a new part rather than as more
+                // of this one.
+                for note_line in note.lines() {
+                    let _ = writeln!(line, "{:width$}  {note_line}", "");
+                }
             }
         }
         Outcome::Skipped(would_run_when) => {
@@ -1391,6 +1713,152 @@ mod tests {
         );
         assert!(printed.contains("ran"), "{printed}");
         assert!(printed.contains(note), "{printed}");
+    }
+
+    // The guards part. Both fixtures are written as source rather than as
+    // files, and the reason is the one
+    // `docs/decisions/fixtures-and-what-a-test-may-be-about.md` gives for the
+    // line-endings pair above: a file carrying the character this refuses
+    // could not sit in the tree, because the guard on the server refuses it
+    // and so does this. The escape is what the file holds; the character only
+    // ever exists after the compiler has read it.
+
+    /// A source in the shape of the ones this register cites.
+    ///
+    /// Invented, as every fixture here is, and carrying the characters a real
+    /// one carries: an umlaut, a ring, a diaeresis and a micro sign, in the
+    /// author list, the journal title and the locator. Those are the fields a
+    /// citation depends on, and a guard that refused them would refuse most of
+    /// the literature this register is for.
+    const A_CITATION: &str = "Müller and Ångström, Zeitschrift für Physik 234 (1970) 56, \
+                              Table 2, column 3, at 0.5 µm";
+
+    /// What a walk found, written as codepoints, so that a failing test does
+    /// not print the character it is about into a terminal or a transcript.
+    fn codepoints(found: &[(usize, char, &Reordering)]) -> String {
+        found
+            .iter()
+            .map(|(at, character, _)| format!("line {at}: U+{:04X}", u32::from(*character)))
+            .collect::<Vec<String>>()
+            .join(", ")
+    }
+
+    #[test]
+    fn a_citation_carrying_ordinary_characters_outside_ascii_is_clean() {
+        assert!(
+            reorders(A_CITATION).is_empty(),
+            "the fields a citation depends on carry these and must pass"
+        );
+    }
+
+    #[test]
+    fn the_same_citation_with_one_override_in_it_is_refused() {
+        // The near neighbour of the fixture above, differing by one character
+        // that takes no width. Rendered, the two lines can look identical; the
+        // page number a reader follows is not the one the file carries.
+        let deceived = A_CITATION.replace("Table 2", "Table \u{202E}2");
+        let found = reorders(&deceived);
+        assert_eq!(found.len(), 1, "{}", codepoints(&found));
+        assert_eq!(found[0].1, '\u{202E}');
+    }
+
+    #[test]
+    fn a_zero_width_space_inside_an_identifier_is_refused() {
+        // The mistake with no visible trace at all: two identifiers that
+        // render the same and are not equal.
+        let found = reorders("  \"identifier\": \"si\u{200B}c-4h-0001\"");
+        assert_eq!(found.len(), 1, "{}", codepoints(&found));
+        assert_eq!(found[0].1, '\u{200B}');
+    }
+
+    #[test]
+    fn every_run_this_refuses_is_refused_at_both_of_its_ends() {
+        // A range written with its ends the wrong way round, or narrowed by
+        // one, is a run this stops refusing while every other test stays
+        // green.
+        for run in REORDERING {
+            for end in [run.first, run.last] {
+                let found = reorders(&format!("a{end}b"));
+                assert_eq!(found.len(), 1, "U+{:04X} is not refused", u32::from(end));
+                assert_eq!(found[0].1, end);
+            }
+        }
+    }
+
+    #[test]
+    fn a_refusal_carries_the_line_it_is_on() {
+        let found = reorders("first\nsecond\nthird\u{2066}\n");
+        assert_eq!(found.len(), 1, "{}", codepoints(&found));
+        assert_eq!(found[0].0, 3);
+    }
+
+    /// The guard on the server, as this tree holds it.
+    fn the_server_side_guard() -> String {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("..")
+            .join(SERVER_SIDE_GUARD);
+        std::fs::read_to_string(path).expect("the guard on the server is in this tree")
+    }
+
+    #[test]
+    fn the_guard_on_the_server_names_every_run_this_one_refuses() {
+        // The set comparison rather than a list somebody remembers to update.
+        // The name that job produces is required for a merge, so this file
+        // cannot replace it, and two copies of one set are only safe while one
+        // of them refuses when the other moves.
+        let adrift = adrift_from(&the_server_side_guard());
+        let adrift: Vec<String> = adrift.iter().map(|run| run.spelled()).collect();
+        assert_eq!(adrift, Vec::<String>::new());
+    }
+
+    #[test]
+    fn a_pattern_that_lost_one_run_is_refused() {
+        // The near miss: one range deleted from the pattern and everything
+        // else left alone, which is what an edit that meant to remove a false
+        // positive actually looks like.
+        let narrowed = the_server_side_guard().replace("\\x{200B}-\\x{200D}", "");
+        let adrift = adrift_from(&narrowed);
+        assert_eq!(adrift.len(), 1);
+        assert_eq!(adrift[0].spelled(), "\\x{200B}-\\x{200D}");
+    }
+
+    #[test]
+    fn a_guard_with_no_pattern_line_leaves_every_run_adrift() {
+        // Fails closed. A file that was rewritten into a shape this cannot
+        // read is not a file this may pass.
+        assert_eq!(adrift_from("").len(), REORDERING.len());
+    }
+
+    #[test]
+    fn every_guard_that_runs_at_the_forge_says_what_running_it_here_would_cost() {
+        for guard in ELSEWHERE {
+            assert!(!guard.name.is_empty());
+            assert!(
+                !guard.reads.is_empty(),
+                "{} says nothing it reads",
+                guard.name
+            );
+            assert!(!guard.cost.is_empty(), "{} names no cost", guard.name);
+        }
+    }
+
+    #[test]
+    fn a_note_of_several_lines_is_indented_a_line_at_a_time() {
+        // A second line left at column zero reads as another part rather than
+        // as more of this one, and the accounting is what the whole report
+        // rests on.
+        let printed = line(
+            &with(
+                "guards",
+                Outcome::Ran(Duration::ZERO, Some("first\nsecond".to_owned())),
+            ),
+            6,
+        );
+        assert_eq!(printed.lines().count(), 3, "{printed}");
+        for printed_line in printed.lines().skip(1) {
+            assert!(printed_line.starts_with("        "), "{printed_line:?}");
+        }
     }
 
     // The headless check. Every fixture spelling below is assembled from two
