@@ -15,6 +15,7 @@
 //! is argued and where this line is given its meaning.
 
 mod canonical;
+mod provenance;
 
 use std::fmt::Write as _;
 use std::io::{self, Write};
@@ -171,6 +172,11 @@ const PARTS: &[Part] = &[
         name: "canonical",
         examines: "every tracked record under register/, against the form the register is stored in",
         runs: Runs::Check(canonical::every_record_is_in_the_canonical_form),
+    },
+    Part {
+        name: "provenance",
+        examines: "every row under register/, for a locator outside the vocabulary, and every source, for whether a row cites it",
+        runs: Runs::Check(provenance::every_locator_is_in_the_vocabulary),
     },
     Part {
         name: "schema",
