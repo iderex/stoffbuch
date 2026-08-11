@@ -179,6 +179,73 @@ is when a run over a wider surface makes it a wall rather than a bar. Whoever
 changes it states the measurement it was changed from and the date, in this
 section, the same way this one does.
 
+## The timeouts, and the bound that removed them
+
+The five timeouts above were not a slow suite. Each replaced a step through the
+text of a record with one that does not advance, so the reader took the same
+byte again and the run ended at its own clock rather than at an answer. A test
+asserts something about what the code returned, and code that never returns has
+nothing for a test to assert about, so no test could have killed one of them.
+
+What removed them is a property in the reader rather than a test beside it. The
+loops in the reader are bounded by the text being finite, and they are bounded by
+that only while every pass consumes at least one byte. Nothing in the grammar
+says so, so the loops say it: each pass records where it began and refuses when
+it ends there or behind there. Where the run over a fixed number of bytes was a
+loop at all, it is now the length measured once and stepped over, so there is no
+loop there to fail to end.
+
+That refusal is the one in this reader no record reaches, because in a reader
+that is right every pass consumes something. It is reached the only way it can
+be, by standing a reader at a position and asking it what a pass ending there was
+worth, and the near neighbour is the same reader one byte further on. Its
+comparison is proved in all three directions, forward, standing still and
+backwards, because a bound written as "not equal" passes a step that moves the
+reading position the wrong way and that is the direction a subtraction where an
+addition belongs actually goes.
+
+The whole surface, which has three files in it since the locator check joined it
+and had two when the section above was written:
+
+    cargo mutants --no-shuffle --file crates/stoffbuch-gate/src/canonical.rs --file crates/stoffbuch-gate/src/lib.rs --file crates/stoffbuch-gate/src/provenance.rs -j 8
+    390 mutants tested in 54m: 7 missed, 238 caught, 145 unviable
+
+No timeout, measured on 2026-08-11. Every one of the five is now reported as
+caught, and so is each arm of the bound that catches them.
+
+THE RUN IS STILL RED AND THE REASON HAS CHANGED, which is the whole point of
+separating the two. Seven mutants survive the suite, all of them in the check
+that accounts for the guards, and they are the counters, the two emptiness
+guards and the comparison that decides whether the binary files are mentioned at
+all:
+
+    cat mutants.out/missed.txt
+    crates/stoffbuch-gate/src/lib.rs:585:20: replace += with -= in every_guard_is_accounted_for
+    crates/stoffbuch-gate/src/lib.rs:558:8: delete ! in every_guard_is_accounted_for
+    crates/stoffbuch-gate/src/lib.rs:595:14: replace += with -= in every_guard_is_accounted_for
+    crates/stoffbuch-gate/src/lib.rs:585:20: replace += with *= in every_guard_is_accounted_for
+    crates/stoffbuch-gate/src/lib.rs:595:14: replace += with *= in every_guard_is_accounted_for
+    crates/stoffbuch-gate/src/lib.rs:605:8: delete ! in every_guard_is_accounted_for
+    crates/stoffbuch-gate/src/lib.rs:622:15: replace > with == in every_guard_is_accounted_for
+
+They are not what this section changed and they were there before it. The same
+seven survive the same check on `c03e9e9`, which is the mainline this was
+branched from:
+
+    cargo mutants --no-shuffle --file crates/stoffbuch-gate/src/lib.rs --re 'every_guard_is_accounted_for' -j 8
+    10 mutants tested in 72s: 7 missed, 3 unviable
+
+That check landed after the triage of the first file and its shapes are the ones
+that triage names, so what happened is that a check was added to a file whose
+survivors had already been counted. It is
+[#122](https://github.com/iderex/stoffbuch/issues/122) and not this section.
+
+One mutant of the bound itself is reported as unviable rather than as caught: the
+one that replaces the whole function with a pass. The position it was given
+becomes an argument nothing reads, the workspace denies warnings, and a change
+that does not compile says nothing about the suite. So what stands behind that
+arm is the three comparisons, and not that one.
+
 ## Why it is off the pull request path
 
 A run costs tens of minutes over a gate that finishes in well under a minute, so

@@ -94,6 +94,11 @@ pub(crate) enum Fault {
     /// resolved: this is the case where two parsers legitimately disagree, and
     /// no ordering rule saves it.
     TwoMembersWithOneName { line: usize, name: String },
+    /// A pass round a loop over the text left the reading position where it
+    /// found it, or behind it. No file produces this: it is the bound that
+    /// makes the reader answer instead of running forever, and what it catches
+    /// is a defect in the reader rather than a defect in a record.
+    DidNotAdvance { line: usize },
 }
 
 impl Fault {
@@ -108,6 +113,10 @@ impl Fault {
             Self::TwoMembersWithOneName { line, name } => {
                 format!("line {line}: two members named {name} in one object")
             }
+            Self::DidNotAdvance { line } => format!(
+                "line {line}: the reading stopped moving through the file, which is this \
+                 reader being wrong rather than the file"
+            ),
         }
     }
 }
@@ -178,11 +187,38 @@ impl Scan<'_> {
         self.text.as_bytes().get(self.at).copied()
     }
 
-    /// Steps over the whitespace JSON allows between tokens.
-    fn space(&mut self) {
-        while matches!(self.peek(), Some(b' ' | b'\t' | b'\n' | b'\r')) {
-            self.at += 1;
+    /// Refuses where a pass round a loop did not move the reading position
+    /// forward from `from`.
+    ///
+    /// Every loop in this reader is bounded by the text being finite, and it is
+    /// bounded by that only while each pass consumes at least one byte. Nothing
+    /// in the grammar says so, so the loops say it: a pass that ends where it
+    /// began, or behind it, is refused here instead of being taken again
+    /// forever.
+    ///
+    /// No file reaches this. A reader that stops answering is worse than one
+    /// that answers wrongly, because a wrong answer is something a suite can
+    /// assert about and a run that never returns is a clock at its deadline,
+    /// and this register will one day read files written by people this project
+    /// does not know.
+    fn advanced_from(&self, from: usize) -> Result<(), Fault> {
+        if self.at > from {
+            return Ok(());
         }
+        Err(Fault::DidNotAdvance { line: self.line() })
+    }
+
+    /// Steps over the whitespace JSON allows between tokens.
+    ///
+    /// The run is measured and stepped over once rather than a byte at a time,
+    /// so the step is arithmetic over a length the text already has and there
+    /// is no loop here to fail to end.
+    fn space(&mut self) {
+        let run = self.text.as_bytes()[self.at..]
+            .iter()
+            .take_while(|byte| matches!(byte, b' ' | b'\t' | b'\n' | b'\r'))
+            .count();
+        self.at += run;
     }
 
     /// Steps over `want`, or says what was there instead.
@@ -230,6 +266,7 @@ impl Scan<'_> {
             return Ok(Node::Object(members));
         }
         loop {
+            let from = self.at;
             self.space();
             let line = self.line();
             let name = self.string()?;
@@ -253,6 +290,7 @@ impl Scan<'_> {
                 }
                 _ => return Err(self.stop("expected , or } after a member")),
             }
+            self.advanced_from(from)?;
         }
     }
 
@@ -266,6 +304,7 @@ impl Scan<'_> {
             return Ok(Node::Array(elements));
         }
         loop {
+            let from = self.at;
             elements.push(self.value()?);
             self.space();
             match self.peek() {
@@ -276,6 +315,7 @@ impl Scan<'_> {
                 }
                 _ => return Err(self.stop("expected , or ] after an element")),
             }
+            self.advanced_from(from)?;
         }
     }
 
@@ -284,6 +324,7 @@ impl Scan<'_> {
         self.take(b'"')?;
         let mut out = String::new();
         loop {
+            let from = self.at;
             let Some(byte) = self.peek() else {
                 return Err(self.stop("the file ends inside a string"));
             };
@@ -309,6 +350,7 @@ impl Scan<'_> {
                     out.push(character);
                 }
             }
+            self.advanced_from(from)?;
         }
     }
 
@@ -405,10 +447,15 @@ impl Scan<'_> {
     }
 
     /// Steps over a run of digits.
+    ///
+    /// Measured and stepped over once, for the reason `space` is: a length the
+    /// text already has, and no loop to fail to end.
     fn digits(&mut self) {
-        while matches!(self.peek(), Some(b'0'..=b'9')) {
-            self.at += 1;
-        }
+        let run = self.text.as_bytes()[self.at..]
+            .iter()
+            .take_while(|byte| byte.is_ascii_digit())
+            .count();
+        self.at += run;
     }
 }
 
@@ -783,7 +830,7 @@ mod tests {
     fn a_refusal_names_which_of_the_faults_it_is() {
         // A check that started refusing everything passes a test that only
         // asked whether something was refused, so every fixture above asserts
-        // the fault and this asserts that the four say different things.
+        // the fault and this asserts that no two of them say the same thing.
         let said = [
             Fault::NotText.says(),
             Fault::ByteOrderMark.says(),
@@ -797,6 +844,7 @@ mod tests {
                 name: "unit".to_owned(),
             }
             .says(),
+            Fault::DidNotAdvance { line: 3 }.says(),
         ];
         for (at, one) in said.iter().enumerate() {
             assert!(!one.is_empty());
@@ -805,6 +853,74 @@ mod tests {
                 "two faults say the same thing: {one}"
             );
         }
+    }
+
+    /// A reader stopped at `at` over a fixed text, for the tests of the bound
+    /// below.
+    ///
+    /// The bound is the one refusal in this file no file reaches, because in a
+    /// reader that is right every pass consumes a byte. So it is reached the
+    /// only way it can be, by standing the reader at a position and asking it
+    /// what a pass ending there was worth. The near neighbour is the same
+    /// reader one byte further on.
+    fn stopped_at(at: usize) -> Scan<'static> {
+        Scan {
+            text: "{\n  \"unit\": \"eV\"\n}\n",
+            at,
+        }
+    }
+
+    #[test]
+    fn a_pass_that_ended_where_it_began_is_refused() {
+        let scan = stopped_at(4);
+        assert_eq!(
+            scan.advanced_from(4),
+            Err(Fault::DidNotAdvance { line: 2 }),
+            "a pass consuming nothing is the one that never ends"
+        );
+    }
+
+    #[test]
+    fn a_pass_that_consumed_one_byte_is_not_refused() {
+        // The near neighbour: the same reader, one byte on, which is the least
+        // progress a pass can make and still be progress.
+        let scan = stopped_at(4);
+        assert_eq!(scan.advanced_from(3), Ok(()));
+    }
+
+    #[test]
+    fn a_pass_that_ended_behind_where_it_began_is_refused() {
+        // Backwards is the direction a bound written as "not equal" would let
+        // through, and it is the direction a step that subtracts where it
+        // should add actually goes.
+        let scan = stopped_at(4);
+        assert_eq!(scan.advanced_from(5), Err(Fault::DidNotAdvance { line: 2 }));
+    }
+
+    #[test]
+    fn the_whitespace_a_reader_steps_over_is_every_byte_of_it_and_no_other() {
+        // `space` and `digits` step over a run whose length they measure, so
+        // what is asserted is the position afterwards rather than that the
+        // stepping ended. A run measured one byte short leaves the reader on a
+        // byte the grammar has already accounted for, and the next thing it
+        // reads is a fault about a file that is right.
+        let mut scan = Scan {
+            text: " \t\r\n{",
+            at: 0,
+        };
+        scan.space();
+        assert_eq!(scan.at, 4);
+        scan.space();
+        assert_eq!(scan.at, 4, "a run of no whitespace steps over nothing");
+
+        let mut scan = Scan {
+            text: "1024, ",
+            at: 0,
+        };
+        scan.digits();
+        assert_eq!(scan.at, 4);
+        scan.digits();
+        assert_eq!(scan.at, 4, "a run of no digits steps over nothing");
     }
 
     #[test]
