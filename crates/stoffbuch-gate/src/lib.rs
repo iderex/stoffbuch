@@ -2428,6 +2428,103 @@ body
         );
     }
 
+    /// A tree the guards check has nothing against, with `extra` beside it.
+    ///
+    /// The guard on the server is the one this tree holds rather than a pattern
+    /// written out here. The check's first leg compares the set it refuses
+    /// against that file, so a fixture carrying its own copy of the pattern
+    /// would go on passing while the two real guards drifted apart, which is
+    /// the one thing that leg exists to catch.
+    fn a_guarded_tree(named: &str, extra: &[(&str, &[u8])]) -> Tree {
+        let server = the_server_side_guard();
+        let mut files: Vec<(&str, &[u8])> = vec![(SERVER_SIDE_GUARD, server.as_bytes())];
+        files.extend_from_slice(extra);
+        a_tree(named, &files)
+    }
+
+    #[test]
+    fn a_tree_with_no_reordering_run_is_reported_with_the_counts_of_what_was_read() {
+        // Two binary files rather than one. With one, a comparison asking
+        // whether exactly one was skipped and a comparison asking whether any
+        // were give the same answer, and the disclosure is what this report
+        // rests on.
+        let tree = a_guarded_tree(
+            "guards-counts",
+            &[
+                ("a.md", b"one\n"),
+                ("b.bin", b"\x00\x01\x02"),
+                ("c.bin", b"\x00\x03\x04"),
+            ],
+        );
+        let said = note(every_guard_is_accounted_for(tree.at()));
+        assert_eq!(
+            said.lines().next(),
+            Some("2 text file(s) read, 2 skipped as binary and not judged"),
+            "{said}"
+        );
+    }
+
+    #[test]
+    fn a_file_this_check_could_not_decode_is_named_rather_than_counted() {
+        // No zero byte, so it is not skipped as binary, and not UTF-8, so its
+        // characters cannot be read. This is the one place the check fails
+        // open, and a file it did not judge is named for that reason.
+        let tree = a_guarded_tree(
+            "guards-undecodable",
+            &[("a.md", b"one\n"), ("latin.md", b"caf\xe9\n")],
+        );
+        let said = note(every_guard_is_accounted_for(tree.at()));
+        assert_eq!(
+            said.lines().next(),
+            Some("2 text file(s) read, latin.md is not UTF-8 and was not judged"),
+            "{said}"
+        );
+    }
+
+    #[test]
+    fn a_reordering_run_in_a_tracked_file_is_refused_with_the_file_the_line_and_the_codepoint() {
+        // The near neighbour of the counted tree above, differing in one
+        // character of one file. The character is written as an escape rather
+        // than as itself: this file is tracked text and is one of the subjects
+        // the check reads, so a literal here would make the guard refuse the
+        // proof that it works.
+        let carrying = "a citation\nM\u{2066}uller\n";
+        let tree = a_guarded_tree("guards-reordering", &[("a.md", carrying.as_bytes())]);
+        let why = refusal(every_guard_is_accounted_for(tree.at()));
+        assert!(why.contains("1 character(s) that reorder"), "{why}");
+        assert!(why.contains("  a.md:2  U+2066"), "{why}");
+    }
+
+    #[test]
+    fn a_tree_whose_guard_on_the_server_lost_a_run_is_refused_before_a_file_is_read() {
+        // The two guards are one set in two places, and the reason this file
+        // cannot simply replace the other is that a merge requires the name
+        // that job produces. So a pattern that lost a range stops the run here
+        // rather than being reported as agreement.
+        let narrowed = the_server_side_guard().replace("\\x{200B}-\\x{200D}", "");
+        let tree = a_tree(
+            "guards-adrift",
+            &[(SERVER_SIDE_GUARD, narrowed.as_bytes()), ("a.md", b"one\n")],
+        );
+        let why = refusal(every_guard_is_accounted_for(tree.at()));
+        assert!(
+            why.contains("1 run(s) refused here are not in the pattern"),
+            "{why}"
+        );
+        assert!(why.contains("\\x{200B}-\\x{200D}"), "{why}");
+    }
+
+    #[test]
+    fn a_tree_with_no_guard_on_the_server_is_refused_rather_than_passed() {
+        // A protection rule pointing at a name nothing produces passes
+        // everything, so the absence of that file is the failure and not the
+        // reason to skip the comparison.
+        let tree = a_tree("guards-missing", &[("a.md", b"one\n")]);
+        let why = refusal(every_guard_is_accounted_for(tree.at()));
+        assert!(why.contains(SERVER_SIDE_GUARD), "{why}");
+        assert!(why.contains("could not be read"), "{why}");
+    }
+
     #[test]
     fn the_test_surface_check_counts_the_rust_files_and_leaves_the_rest() {
         let tree = a_tree(
