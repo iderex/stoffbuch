@@ -149,6 +149,11 @@ const PARTS: &[Part] = &[
         runs: Runs::Check(every_accepted_finding_is_recorded),
     },
     Part {
+        name: "pins",
+        examines: "every action a workflow uses, for a commit identifier written in full with the version it names beside it",
+        runs: Runs::Check(every_action_is_pinned),
+    },
+    Part {
         name: "format",
         examines: "every Rust file in the workspace, against the form rustfmt writes",
         // `--color=never` is passed through to rustfmt, which colours its diff
@@ -1345,6 +1350,146 @@ fn record_named<'a>(said: &str, records: &[&'a str]) -> Option<&'a str> {
     records.iter().copied().find(|record| said.contains(record))
 }
 
+/// Where the workflow files this reads live.
+const WORKFLOWS: &str = ".github/workflows/";
+
+/// How many characters a commit identifier written in full has.
+const IDENTIFIER: usize = 40;
+
+/// Refuses an action a workflow uses that is not pinned to a full commit
+/// identifier with a version beside it.
+///
+/// A tag is a name the other repository can move. A workflow naming one runs
+/// whatever that repository decides tomorrow, inside a job that holds this
+/// repository's token, and nothing about the change would appear in a diff
+/// here. A full commit identifier cannot be moved, and the version beside it is
+/// what makes the pin readable by whoever later decides whether to raise it.
+///
+/// What it cannot decide is whether the version beside an identifier is the one
+/// that identifier carries. That is a fact in the other repository and no clone
+/// holds it, so a pin with a wrong version passes and the note says so rather
+/// than leaving a green run to be read as more.
+///
+/// The reading is a line at a time and carries no parser for the format the
+/// workflows are written in, which is the bound the guards check carries as
+/// well. A line inside a shell block that begins the way a step's action does
+/// is read as one, and an action written across two lines is not read at all.
+fn every_action_is_pinned(root: &Path) -> Judged {
+    let tracked = match tracked(root) {
+        Ok(tracked) => tracked,
+        Err(why) => return Judged::CouldNotJudge(why),
+    };
+
+    let mut wrong = Vec::new();
+    let mut files = 0_usize;
+    let mut referenced = 0_usize;
+    let mut here = 0_usize;
+    let mut unread = 0_usize;
+
+    for name in tracked {
+        if !is_a_workflow(&name) {
+            continue;
+        }
+        let Ok(text) = std::fs::read_to_string(root.join(&name)) else {
+            // Tracked and not readable in the working copy: staged for
+            // deletion, or bytes this cannot read. Counted rather than passed
+            // over, because a workflow nothing read is not one nothing refused.
+            unread += 1;
+            continue;
+        };
+        files += 1;
+        for (at, line) in text.lines().enumerate() {
+            let Some(reference) = action_on(line) else {
+                continue;
+            };
+            if reference.starts_with("./") {
+                // An action in this repository, which the commit the run is on
+                // already pins. Counted apart rather than passed over, so the
+                // reference count stays the count of what was judged.
+                here += 1;
+                continue;
+            }
+            referenced += 1;
+            if let Some(why) = unpinned(reference) {
+                wrong.push(format!("  {name}:{}  {reference}\n      {why}", at + 1));
+            }
+        }
+    }
+
+    if !wrong.is_empty() {
+        let mut why = format!(
+            "{} action reference(s) a workflow uses are not pinned:\n\n",
+            wrong.len()
+        );
+        for one in &wrong {
+            let _ = writeln!(why, "{one}");
+        }
+        let _ = writeln!(
+            why,
+            "\nA tag is a name the other repository can move, so the job that runs it \
+             holds this\nrepository's token and runs whatever that repository decides \
+             tomorrow. The form\nis the full commit identifier with the version it \
+             corresponds to beside it, as\n`owner/action@<identifier> # v1.2.3`."
+        );
+        return Judged::Refused(why);
+    }
+
+    let mut note = format!("{referenced} action reference(s) in {files} workflow file(s)");
+    if here > 0 {
+        let _ = write!(
+            note,
+            ", {here} naming this repository and pinned by the commit the run is on"
+        );
+    }
+    if unread > 0 {
+        let _ = write!(note, ", {unread} tracked but not in the working copy");
+    }
+    let _ = write!(
+        note,
+        "\nwhether a version beside an identifier is the one that identifier carries is a \
+         fact in the other repository, and no clone holds it"
+    );
+    Judged::Nothing(Some(note))
+}
+
+/// Whether a tracked path is a workflow this reads.
+fn is_a_workflow(name: &str) -> bool {
+    name.starts_with(WORKFLOWS)
+        && Path::new(name).extension().is_some_and(|extension| {
+            extension.eq_ignore_ascii_case("yml") || extension.eq_ignore_ascii_case("yaml")
+        })
+}
+
+/// What a line names as the action a step uses, where it names one.
+fn action_on(line: &str) -> Option<&str> {
+    let line = line.trim_start();
+    let line = line.strip_prefix("- ").unwrap_or(line);
+    Some(line.strip_prefix("uses:")?.trim())
+}
+
+/// Why a reference is not a pin, or nothing where it is one.
+///
+/// The three answers are separate sentences rather than one, because a
+/// contributor told only that a reference was refused reads the rule and
+/// guesses, and the three mistakes have different repairs: name the identifier,
+/// write it in full, and say which version it is.
+fn unpinned(reference: &str) -> Option<&'static str> {
+    let (named, version) = match reference.split_once('#') {
+        Some((named, version)) => (named.trim(), Some(version)),
+        None => (reference.trim(), None),
+    };
+    let Some((_, identifier)) = named.rsplit_once('@') else {
+        return Some("names no commit identifier");
+    };
+    if identifier.len() != IDENTIFIER || !identifier.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Some("is not pinned to a commit identifier written in full");
+    }
+    match version {
+        Some(version) if version.bytes().any(|byte| byte.is_ascii_digit()) => None,
+        _ => Some("carries no version beside the identifier"),
+    }
+}
+
 /// Whether the check treats a file as binary and does not judge it.
 ///
 /// A zero byte near the start is git's own test, and using the same one keeps
@@ -2524,6 +2669,166 @@ body
         assert!(why.contains(SERVER_SIDE_GUARD), "{why}");
         assert!(why.contains("could not be read"), "{why}");
     }
+
+    /// A step naming `reference`, written the way a workflow writes one.
+    fn a_step_using(reference: &str) -> String {
+        format!("jobs:\n  one:\n    steps:\n      - name: Check out\n        uses: {reference}\n")
+    }
+
+    #[test]
+    fn a_workflow_whose_actions_are_pinned_is_reported_with_the_count_of_what_was_read() {
+        let first =
+            a_step_using("actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1");
+        let second =
+            a_step_using("ossf/scorecard-action@2d1146689b8cda280b9bc96326124645441f03bc # v2.4.4");
+        let tree = a_tree(
+            "pins-clean",
+            &[
+                (".github/workflows/a.yml", first.as_bytes()),
+                (".github/workflows/b.yaml", second.as_bytes()),
+                // Two files that are not the subject: one outside the
+                // directory and one inside it that is not a workflow. A check
+                // that read either would report a count nobody can act on.
+                ("a.yml", first.as_bytes()),
+                (".github/workflows/notes.md", b"uses: actions/checkout@v7\n"),
+            ],
+        );
+        let said = note(every_action_is_pinned(tree.at()));
+        assert_eq!(
+            said.lines().next(),
+            Some("2 action reference(s) in 2 workflow file(s)"),
+            "{said}"
+        );
+        assert!(
+            said.contains("no clone holds it"),
+            "a green run says what it did not decide: {said}"
+        );
+    }
+
+    #[test]
+    fn an_action_named_by_a_tag_is_refused_with_the_file_the_line_and_what_it_said() {
+        // The near neighbour of the clean tree above, differing in the part of
+        // one reference after the `@`. This is the mistake somebody actually
+        // makes: the tag is what the action's own readme tells them to write.
+        let carrying = a_step_using("actions/checkout@v7 # v7.0.1");
+        let tree = a_tree(
+            "pins-tag",
+            &[(".github/workflows/a.yml", carrying.as_bytes())],
+        );
+        let why = refusal(every_action_is_pinned(tree.at()));
+        assert!(why.contains("1 action reference(s)"), "{why}");
+        assert!(why.contains("  .github/workflows/a.yml:5"), "{why}");
+        assert!(
+            why.contains("is not pinned to a commit identifier written in full"),
+            "{why}"
+        );
+    }
+
+    #[test]
+    fn an_action_with_no_version_beside_its_identifier_is_refused_for_its_own_reason() {
+        // Pinned and unreadable. Nobody raising this later can tell what
+        // version they would be raising from without going and looking it up
+        // in the other repository.
+        let carrying = a_step_using("actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1");
+        let tree = a_tree(
+            "pins-no-version",
+            &[(".github/workflows/a.yml", carrying.as_bytes())],
+        );
+        let why = refusal(every_action_is_pinned(tree.at()));
+        assert!(
+            why.contains("carries no version beside the identifier"),
+            "{why}"
+        );
+    }
+
+    #[test]
+    fn an_action_this_repository_holds_is_counted_apart_rather_than_refused() {
+        // It carries no identifier and needs none: the commit the run is on is
+        // the pin. Counted apart so the reference count stays the count of
+        // what was judged.
+        let ours = a_step_using("./.github/actions/one");
+        let tree = a_tree("pins-here", &[(".github/workflows/a.yml", ours.as_bytes())]);
+        let said = note(every_action_is_pinned(tree.at()));
+        assert_eq!(
+            said.lines().next(),
+            Some(
+                "0 action reference(s) in 1 workflow file(s), 1 naming this repository \
+                 and pinned by the commit the run is on"
+            ),
+            "{said}"
+        );
+    }
+
+    #[test]
+    fn a_tracked_workflow_absent_from_the_working_copy_is_counted_rather_than_passed_over() {
+        let pinned =
+            a_step_using("actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1");
+        let tree = a_tree(
+            "pins-absent",
+            &[
+                (".github/workflows/a.yml", pinned.as_bytes()),
+                (".github/workflows/gone.yml", pinned.as_bytes()),
+            ],
+        );
+        std::fs::remove_file(tree.at().join(".github/workflows/gone.yml"))
+            .expect("a file this test just wrote");
+        let said = note(every_action_is_pinned(tree.at()));
+        assert_eq!(
+            said.lines().next(),
+            Some(
+                "1 action reference(s) in 1 workflow file(s), 1 tracked but not in the \
+                 working copy"
+            ),
+            "{said}"
+        );
+    }
+
+    #[test]
+    fn the_two_spellings_of_a_step_are_both_read_and_nothing_else_is() {
+        assert_eq!(
+            action_on("        uses: actions/checkout@v7"),
+            Some("actions/checkout@v7")
+        );
+        assert_eq!(
+            action_on("      - uses: actions/checkout@v7"),
+            Some("actions/checkout@v7")
+        );
+        assert_eq!(action_on("        run: echo uses: nothing"), None);
+        assert_eq!(action_on("        name: uses"), None);
+    }
+
+    #[test]
+    fn a_reference_naming_no_identifier_at_all_is_refused_for_a_third_reason() {
+        // Three reasons rather than one, because the repairs differ: name the
+        // identifier, write it in full, and say which version it is.
+        assert_eq!(
+            unpinned("actions/checkout"),
+            Some("names no commit identifier")
+        );
+        assert_eq!(
+            unpinned("actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # pinned"),
+            Some("carries no version beside the identifier"),
+            "a comment naming no version is not a version"
+        );
+        assert_eq!(
+            unpinned("actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1"),
+            None
+        );
+        assert_eq!(
+            unpinned("actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b # v7.0.1"),
+            Some("is not pinned to a commit identifier written in full"),
+            "one character short is the near neighbour of the pinned form"
+        );
+    }
+
+    // What this tree's own workflows say is judged by the gate rather than by a
+    // test here. A test that asked this check about this checkout would ask git
+    // what is tracked, and a mutation run works in a copy of the tree that is
+    // not a checkout, so such a test fails there for a reason that is not a
+    // defect. The canonical form's suite already learned that and says so where
+    // it walks the tree instead. The gate runs the part over this tree on every
+    // push and every change, which is where a workflow added with a tag in it
+    // goes red.
 
     #[test]
     fn the_test_surface_check_counts_the_rust_files_and_leaves_the_rest() {
