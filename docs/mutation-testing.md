@@ -246,6 +246,41 @@ becomes an argument nothing reads, the workspace denies warnings, and a change
 that does not compile says nothing about the suite. So what stands behind that
 arm is the three comparisons, and not that one.
 
+## The check nothing had reached, and the first green run
+
+The seven above had one cause and it is the same one both earlier triages found:
+a check that reads the tree is reachable only by a fixture that gives it a tree,
+and nothing gave this one. Its name appeared twice in the whole workspace, at the
+line declaring it a part and at the line defining it, and at no call in the
+suite. What the suite reached instead were the two pure functions underneath it,
+the one that finds a reordering run in a text and the one that reads the pattern
+out of the guard on the server, and both of those were well covered, which is
+what made the gap easy to miss.
+
+The reason it was not caught by the earlier triages is chronology rather than
+judgement. This check landed after the run that counted the survivors in the file
+it sits in, so it arrived in a file whose survivors had already been counted and
+was never counted itself. THAT IS THE THING TO CARRY FORWARD: a triage is a
+measurement of a file on a day, and a check added afterwards owes its own.
+
+The counts are compared whole, the way the first triage settled, and the two
+emptiness guards have a fixture that trips each and a near neighbour that does
+not. The comparison deciding whether the binary files are mentioned needs a
+tree with two of them, because with one, a run asking whether exactly one was
+skipped and a run asking whether any were give the same answer.
+
+The whole surface, with every triage in place:
+
+    cargo mutants --no-shuffle --file crates/stoffbuch-gate/src/canonical.rs --file crates/stoffbuch-gate/src/lib.rs --file crates/stoffbuch-gate/src/provenance.rs -j 8
+    390 mutants tested in 30m: 245 caught, 145 unviable
+
+    echo "exit=$?"
+    exit=0
+
+No survivor and no timeout, measured on 2026-08-11, and this is the first run
+that is green rather than red for a reason worth reading. From here a red run
+means something changed, which is the whole of what the threshold was set to buy.
+
 ## Why it is off the pull request path
 
 A run costs tens of minutes over a gate that finishes in well under a minute, so
