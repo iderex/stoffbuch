@@ -137,7 +137,8 @@ command:
 
     cargo run --quiet --locked -p stoffbuch-cli -- gate
 
-This sentence said the command did not exist until it landed.
+The command was named here before it ran. It runs now, and `40419a1` is the
+correction.
 
 It does not decide the terms a contribution is accepted under. The repository is
 licensed under AGPL-3.0, and the text is in [LICENSE](LICENSE); this paragraph
