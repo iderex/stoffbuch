@@ -30,9 +30,8 @@ The gap between the target and this list is what this milestone closes, and
 requiring names is the last issue of it rather than the first, because a name is
 only worth requiring once the check behind it is worth passing.
 
-This document holds the names from the target board and the outcome for each. It
-is also the one place a name is allowed to be restated, so that a rename shows as
-a change to this file.
+The names from the target board and the outcome for each are below. A name may be
+restated here and nowhere else, so a rename shows as a change to this file.
 
 ## The outcomes
 
