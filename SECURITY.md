@@ -16,6 +16,10 @@ private advisory that only the maintainer can read. Nothing about it is public
 until it is published, and a report that turns out to be nothing is closed
 without ever being published.
 
+The form is here, without navigating:
+
+<https://github.com/iderex/stoffbuch/security/advisories/new>
+
 Do not open a public issue for anything listed under what is in scope below, and
 do not open one for a value you believe was made up. Everything else, including
 a value you believe is simply wrong, belongs on the public tracker, because a
